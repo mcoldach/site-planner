@@ -1,0 +1,46 @@
+---
+description: "Constraint-aware site planning workbench — project constraints"
+alwaysApply: true
+---
+
+# Project: Constraint-Aware Site Planning Workbench
+
+Browser-first web app. Parcel geometry + governing rules + public records → editable site scheme + first-pass underwrite. Pilot: Colorado Springs city + unincorporated El Paso County.
+
+## Stack (decided — do not suggest alternatives)
+- React + Vite + TypeScript (NOT Next.js)
+- MapLibre GL JS for 2D map (NOT Mapbox, NOT Cesium)
+- Three.js + React Three Fiber for 3D scheme view (Phase 1+, not Phase 0)
+- Supabase-managed Postgres with PostGIS and pgvector (NOT a separate vector DB)
+- Graphile Worker for background jobs (NOT Temporal, NOT Inngest) — Phase 1+
+- Docling primary, PyMuPDF fallback for PDF parsing — Phase 2+
+- Tailwind CSS with locked-down custom config (tokens only)
+- Cloudflare R2 for object storage — Phase 1+
+
+## Governing principles (non-negotiable)
+1. Cited, versioned truth. Every user-visible rule traces to a source_snapshot.
+2. Geometry lives in PostGIS, not React state. One canonical spatial store.
+3. Jurisdiction (city vs county) is first-class. Two packs from day one.
+4. Open/cheap default, premium gated. No Google 3D Tiles as default canvas.
+5. Feasibility-grade, not survey-grade. UI never implies stamped entitlement.
+6. One copilot, deterministic tools, explicit approvals. No agent swarms.
+7. LLMs propose; PostGIS + typed code compute. LLMs are never the source of zoning truth.
+
+## Current phase
+Phase 0 — setup and validation. Scope: real parcel lookup + cited rules panel. No auth, no editing, no LLM, no Tauri, no R3F yet. Those come in Phase 1+.
+
+## Design language
+Tufte + Knaflic. Restrained palette: greys + two blues (accent and secondary). One thing emphasized per view. Thin rules, generous whitespace, serif for headings, sans for body. The citation panel is the product's signature visual moment — treat it with care.
+
+## What to REFUSE when asked
+- Next.js (use Vite)
+- Mapbox GL JS (use MapLibre)
+- A separate vector database like Pinecone/Weaviate/Qdrant (use pgvector in the same Postgres)
+- An autonomous agent framework or multi-agent chain (one copilot with deterministic tools)
+- Hardcoding zoning rules in JS constants (they belong in the claims table with source_snapshot links)
+- Storing parcel geometry only in React state or JSON files (PostGIS is the store)
+- Any framing that implies survey-grade or permit-ready output
+- Reproducing copyrighted zoning text verbatim in code or seeds (use cited summaries, not full-text copies)
+
+## When unsure
+Prefer boring and portable over clever. Ask before introducing a new dependency. Prefer vanilla Postgres patterns (SQL, relations, PostGIS functions) over ORM-specific features that don't port.
