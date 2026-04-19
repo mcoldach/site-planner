@@ -1,0 +1,38 @@
+/*
+ * Design tokens — canonical source of truth.
+ *
+ * These CSS custom properties are consumed by:
+ *   - Tailwind (via tailwind.config.js, which re-exports them)
+ *   - MapLibre style JSON (read at runtime)
+ *   - R3F materials in Phase 1+ (read at runtime)
+ *
+ * Do NOT add semantic status colors (success/warn/error) here. If they
+ * become necessary in Phase 1, we'll add them then.
+ */
+
+:root {
+  /* Greys: ink → fog, then warm paper backgrounds */
+  --color-ink: #1a1a1a;        /* primary text, maximum contrast */
+  --color-graphite: #3a3a3a;   /* secondary text */
+  --color-slate: #6a6a6a;      /* tertiary text, labels */
+  --color-mist: #a8a8a8;       /* muted, disabled */
+  --color-fog: #d4d4d4;        /* fine rules, dividers */
+  --color-paper: #f5f4f0;      /* warm off-white background, Tufte-ish */
+  --color-canvas: #faf9f6;     /* even warmer, for cards */
+  --color-white: #ffffff;
+
+  /* The two blues. Accent is the "one thing emphasized" color. */
+  --color-accent: #1f4e79;
+  --color-accent-soft: #4a7ba6;
+  --color-accent-wash: #e8eef5;
+
+  /* Type stacks */
+  --font-serif: 'Charter', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Rules and shadows. Tufte: avoid shadows unless truly earning it. */
+  --rule-hair: 0.5px;
+  --rule-thin: 1px;
+  --shadow-none: none;
+}
