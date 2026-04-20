@@ -55,3 +55,76 @@ begin
   return _id;
 end;
 $$;
+
+-- -----------------------------------------------------------------------------
+-- Parcel seed: upsert from Colorado Public Parcels (or similar) GeoJSON geometry
+-- + attributes. Invoked by scripts/seed_parcels.ts (service role).
+-- -----------------------------------------------------------------------------
+
+create or replace function upsert_parcel(
+  _source_apn     text,
+  _source_system  text,
+  _geojson        jsonb,
+  _raw_attrs      jsonb,
+  _retrieved_at   timestamptz,
+  _source_url     text
+) returns uuid
+language plpgsql
+as $$
+declare
+  _id   uuid;
+  _geom extensions.geometry;
+begin
+  _geom := extensions.ST_Multi(extensions.ST_GeomFromGeoJSON(_geojson::text));
+
+  insert into parcels (
+    source_apn, source_system, geometry, raw_attrs, retrieved_at, source_url
+  )
+  values (
+    _source_apn,
+    _source_system,
+    _geom::extensions.geometry(MultiPolygon, 4326),
+    coalesce(_raw_attrs, '{}'::jsonb),
+    _retrieved_at,
+    _source_url
+  )
+  on conflict (source_system, source_apn) do update set
+    geometry     = excluded.geometry,
+    raw_attrs    = excluded.raw_attrs,
+    retrieved_at = excluded.retrieved_at,
+    source_url   = excluded.source_url,
+    updated_at   = now()
+  returning id into _id;
+
+  return _id;
+end;
+$$;
+
+-- Post-seed summary for scripts/seed_parcels.ts (jurisdiction resolution + acres).
+
+create or replace function parcel_seed_summary(_source_apns text[])
+returns table (
+  source_apn text,
+  area_acres double precision,
+  resolved_jurisdiction text
+)
+language sql
+stable
+as $$
+  select
+    p.source_apn,
+    (extensions.ST_Area((p.geometry)::geography) / 4046.86)::double precision as area_acres,
+    case
+      when extensions.ST_Contains(
+        (select boundary from jurisdictions where slug = 'colorado_springs'),
+        p.geometry
+      ) then 'colorado_springs'
+      when extensions.ST_Contains(
+        (select boundary from jurisdictions where slug = 'el_paso_county_unincorporated'),
+        p.geometry
+      ) then 'el_paso_county_unincorporated'
+      else 'unknown'
+    end as resolved_jurisdiction
+  from parcels p
+  where p.source_apn = any (_source_apns);
+$$;
