@@ -1,6 +1,7 @@
 import { ArrowUpRight } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { ClaimsList } from './ClaimsList'
+import { ZoningCoverage } from './ZoningCoverage'
 import { fetchParcelWithJurisdictionAndClaims } from '../lib/data'
 import type {
   AuthorityType,
@@ -8,6 +9,7 @@ import type {
   Jurisdiction,
   Parcel,
   ParcelContext,
+  ZoneCode,
 } from '../lib/types'
 
 type SidebarProps = {
@@ -36,17 +38,27 @@ function formatRetrievedDate(iso: string): string {
 
 type ParcelHeaderProps = {
   parcel: Parcel
+  baseCodes: ZoneCode[]
 }
 
-function ParcelHeader({ parcel }: ParcelHeaderProps) {
+function ParcelHeader({ parcel, baseCodes }: ParcelHeaderProps) {
+  const codes = baseCodes.map((b) => b.code)
+  const zoneLabel = codes.length >= 2 ? 'Zones:' : 'Zone:'
+  const zoneValue =
+    codes.length === 0
+      ? (parcel.zone_district_code ?? '—')
+      : codes.length === 1
+        ? codes[0]
+        : codes.join(', ')
+
   return (
     <header>
       <h2 className="font-serif text-lg text-[var(--color-ink)]">
         {parcel.label ?? parcel.source_apn}
       </h2>
       <p className="mt-1 font-mono text-xs text-[var(--color-slate)]">
-        APN: {parcel.source_apn} &nbsp;&nbsp;·&nbsp;&nbsp; Zone:{' '}
-        {parcel.zone_district_code ?? '—'}
+        APN: {parcel.source_apn} &nbsp;&nbsp;·&nbsp;&nbsp; {zoneLabel}{' '}
+        {zoneValue}
       </p>
     </header>
   )
@@ -190,7 +202,10 @@ export function Sidebar({ selectedParcelId, allParcels: _allParcels }: SidebarPr
         <p className="text-sm text-[var(--color-slate)]">{error}</p>
       ) : context ? (
         <>
-          <ParcelHeader parcel={context.parcel} />
+          <ParcelHeader
+            parcel={context.parcel}
+            baseCodes={context.classification.base_codes}
+          />
           <HairlineRule />
           {context.jurisdiction ? (
             <JurisdictionBlock jurisdiction={context.jurisdiction} />
@@ -199,8 +214,18 @@ export function Sidebar({ selectedParcelId, allParcels: _allParcels }: SidebarPr
               No jurisdiction resolved for this parcel.
             </p>
           )}
+          {context.classification.overlay_codes.length > 0 ||
+          context.classification.unclassified_codes.length > 0 ? (
+            <>
+              <HairlineRule />
+              <ZoningCoverage classification={context.classification} />
+            </>
+          ) : null}
           <HairlineRule />
-          <ClaimsList claims={context.claims} />
+          <ClaimsList
+            claims={context.claims}
+            baseCodes={context.classification.base_codes}
+          />
           <HairlineRule />
           <ProvenanceFooter
             claims={context.claims}

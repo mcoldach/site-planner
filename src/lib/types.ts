@@ -3,7 +3,7 @@
  *
  * These mirror the shape returned by the `parcels_geojson` view and the
  * `get_parcel_context(_parcel_id uuid)` RPC defined in
- * supabase/migrations/20260419_0500_views.sql. Keep this file and that
+ * supabase/migrations/20260522120000_views.sql. Keep this file and that
  * migration in sync; the SQL is the source of truth for the wire shape.
  */
 
@@ -55,8 +55,23 @@ export type Claim = {
   source_snapshot: { title: string; url: string };
 };
 
+export type ZoneCode = {
+  code: string;
+  label: string | null;
+  code_section: string | null;
+  source_url: string | null;
+};
+
+export type Classification = {
+  base_codes: ZoneCode[];
+  overlay_codes: ZoneCode[];
+  combined_codes: ZoneCode[];
+  unclassified_codes: string[];
+};
+
 export type ParcelContext = {
   parcel: Parcel;
   jurisdiction: Jurisdiction | null;
+  classification: Classification;
   claims: Claim[];
 };
