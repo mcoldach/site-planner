@@ -53,7 +53,10 @@ function App() {
             onParcelClick={setSelectedParcelId}
           />
         </div>
-        <Sidebar selectedParcelId={selectedParcelId} />
+        <Sidebar
+          selectedParcelId={selectedParcelId}
+          allParcels={allParcels}
+        />
       </main>
     </div>
   )
