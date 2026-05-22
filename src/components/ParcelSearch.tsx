@@ -122,7 +122,7 @@ export function ParcelSearch({
         value={query}
         placeholder="Address or parcel number…"
         autoComplete="off"
-        className={`hairline w-full rounded-sm bg-white py-2 pl-9 font-sans text-sm text-[var(--color-ink)] placeholder:text-[var(--color-slate)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-accent)] ${
+        className={`hairline w-full rounded-sm bg-white py-2 pl-9 font-sans text-sm text-[var(--color-ink)] placeholder:text-[var(--color-slate)] ${
           selectedParcelId ? 'pr-9' : 'pr-3'
         }`}
         onChange={(e) => {

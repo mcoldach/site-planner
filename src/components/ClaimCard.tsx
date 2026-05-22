@@ -13,7 +13,7 @@ export function ClaimCard({ claim }: ClaimCardProps) {
 
   return (
     <div className="py-3 transition-colors duration-150 hover:bg-[var(--color-accent-wash)]">
-      <p className="font-sans text-sm text-[var(--color-ink)]">
+      <p className="font-sans text-xs text-[var(--color-ink)]">
         {getRuleLabel(claim.rule_key)}
       </p>
 
@@ -21,8 +21,8 @@ export function ClaimCard({ claim }: ClaimCardProps) {
         <span
           className={
             isProse
-              ? 'font-serif text-base leading-snug text-[var(--color-ink)]'
-              : 'font-serif text-2xl leading-none text-[var(--color-ink)]'
+              ? 'font-serif text-lg leading-snug text-[var(--color-ink)]'
+              : 'font-serif text-3xl leading-none text-[var(--color-ink)]'
           }
           style={isProse ? undefined : { fontVariantNumeric: 'tabular-nums' }}
         >

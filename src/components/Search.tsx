@@ -31,7 +31,7 @@ export function Search({ allParcels, setSelectedParcelId }: SearchProps) {
           type="search"
           name="q"
           placeholder="Address or parcel number…"
-          className="hairline w-full rounded-sm bg-white py-2 pl-9 pr-3 font-sans text-sm text-[var(--color-ink)] placeholder:text-[var(--color-slate)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-accent)]"
+          className="hairline w-full rounded-sm bg-white py-2 pl-9 pr-3 font-sans text-sm text-[var(--color-ink)] placeholder:text-[var(--color-slate)]"
           autoComplete="off"
         />
       </div>

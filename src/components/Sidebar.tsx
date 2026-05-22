@@ -183,7 +183,9 @@ export function Sidebar({ selectedParcelId, allParcels: _allParcels }: SidebarPr
       {!selectedParcelId ? (
         <EmptyState />
       ) : loading ? (
-        <p className="text-sm text-[var(--color-slate)]">loading…</p>
+        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
+          loading…
+        </p>
       ) : error ? (
         <p className="text-sm text-[var(--color-slate)]">{error}</p>
       ) : context ? (

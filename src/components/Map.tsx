@@ -14,8 +14,6 @@ const CO_SPRINGS_BBOX: [[number, number], [number, number]] = [
 const OPENFREEMAP_POSITRON =
   'https://tiles.openfreemap.org/styles/positron';
 
-const NONE_ID = '__none__';
-
 function parcelsToFeatureCollection(parcels: Parcel[]): FeatureCollection {
   return {
     type: 'FeatureCollection',
@@ -78,6 +76,7 @@ export function Map({ selectedParcelId, onParcelClick }: MapProps) {
     mapRef.current = map;
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    map.getCanvas().tabIndex = -1;
 
     const accentWash = getCssToken('--color-accent-wash');
     const graphite = getCssToken('--color-graphite');
@@ -124,7 +123,7 @@ export function Map({ selectedParcelId, onParcelClick }: MapProps) {
             id: 'parcels-outline-selected',
             type: 'line',
             source: 'parcels',
-            filter: ['==', ['get', 'id'], NONE_ID],
+            filter: ['literal', false],
             paint: {
               'line-color': accent,
               'line-width': 2,
@@ -245,20 +244,14 @@ function applySelection(
   ctx: SelectionContext,
 ) {
   const { graphite, accent, geojson, parcelsBounds, pulseTimeoutRef } = ctx;
-  const filterId = selectedParcelId ?? NONE_ID;
 
   if (pulseTimeoutRef.current) {
     clearTimeout(pulseTimeoutRef.current);
     pulseTimeoutRef.current = null;
   }
 
-  map.setFilter('parcels-outline-selected', [
-    '==',
-    ['get', 'id'],
-    filterId,
-  ]);
-
   if (!selectedParcelId) {
+    map.setFilter('parcels-outline-selected', ['literal', false]);
     map.setFilter('parcels-fill', null);
     map.setPaintProperty('parcels-fill', 'fill-opacity', 0);
     map.setPaintProperty('parcels-outline', 'line-color', graphite);
@@ -271,6 +264,11 @@ function applySelection(
     return;
   }
 
+  map.setFilter('parcels-outline-selected', [
+    '==',
+    ['get', 'id'],
+    selectedParcelId,
+  ]);
   map.setFilter('parcels-fill', ['==', ['get', 'id'], selectedParcelId]);
   map.setPaintProperty('parcels-outline', 'line-color', [
     'case',
