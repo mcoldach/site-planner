@@ -1,4 +1,5 @@
 import { Search } from 'lucide-react'
+import { Map } from './components/Map'
 
 function App() {
   return (
@@ -43,10 +44,8 @@ function App() {
       </header>
 
       <main className="flex min-h-0 flex-1">
-        <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-[var(--color-fog)]">
-          <p className="font-mono text-sm text-[var(--color-slate)]">
-            [Map loads in Session 6]
-          </p>
+        <div className="relative min-h-0 min-w-0 flex-1">
+          <Map selectedParcelId={null} />
         </div>
         <aside className="hairline w-[380px] shrink-0 border-t-0 border-b-0 border-r-0 bg-[var(--color-paper)] p-6">
           <p className="font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-[var(--color-slate)]">
