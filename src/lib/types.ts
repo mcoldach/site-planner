@@ -47,6 +47,8 @@ export type Claim = {
   jurisdiction_id: string;
   zone_district_code: string | null;
   rule_key: string;
+  label: string | null;
+  category: string | null;
   value_text: string | null;
   value_numeric: number | null;
   value_unit: string | null;

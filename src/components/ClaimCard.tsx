@@ -1,5 +1,5 @@
 import { ArrowUpRight } from 'lucide-react'
-import { formatClaimValue, getRuleLabel } from '../lib/rule-catalog'
+import { formatClaimValue, resolveClaimLabel } from '../lib/rule-catalog'
 import type { Claim } from '../lib/types'
 
 type ClaimCardProps = {
@@ -14,7 +14,7 @@ export function ClaimCard({ claim }: ClaimCardProps) {
   return (
     <div className="py-3 transition-colors duration-150 hover:bg-[var(--color-accent-wash)]">
       <p className="font-sans text-xs text-[var(--color-ink)]">
-        {getRuleLabel(claim.rule_key)}
+        {resolveClaimLabel(claim)}
       </p>
 
       <div className="mt-1 flex flex-row items-baseline">

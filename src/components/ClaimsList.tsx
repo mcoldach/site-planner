@@ -1,6 +1,6 @@
 import {
   CATEGORY_ORDER,
-  getRuleCategory,
+  resolveClaimCategory,
   type RuleCategory,
 } from '../lib/rule-catalog'
 import type { Claim, ZoneCode } from '../lib/types'
@@ -20,7 +20,7 @@ type DistrictGroup = {
 function groupClaimsByCategory(claims: Claim[]): Map<RuleCategory, Claim[]> {
   const grouped = new Map<RuleCategory, Claim[]>()
   for (const claim of claims) {
-    const category = getRuleCategory(claim.rule_key)
+    const category = resolveClaimCategory(claim)
     const list = grouped.get(category) ?? []
     list.push(claim)
     grouped.set(category, list)

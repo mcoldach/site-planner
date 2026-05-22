@@ -32,6 +32,20 @@ export function getRuleCategory(key: string): RuleCategory {
   return 'Other';
 }
 
+export function resolveClaimLabel(claim: Claim): string {
+  return claim.label ?? getRuleLabel(claim.rule_key);
+}
+
+export function resolveClaimCategory(claim: Claim): RuleCategory {
+  if (
+    claim.category !== null &&
+    (CATEGORY_ORDER as readonly string[]).includes(claim.category)
+  ) {
+    return claim.category as RuleCategory;
+  }
+  return getRuleCategory(claim.rule_key);
+}
+
 export const CATEGORY_ORDER: RuleCategory[] = [
   'Setbacks',
   'Height',
