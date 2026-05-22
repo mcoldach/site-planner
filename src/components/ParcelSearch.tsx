@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Search as SearchIcon, X } from 'lucide-react'
+import { lookupParcelByApn } from '../lib/data'
 import type { Parcel } from '../lib/types'
 
 type ParcelSearchProps = {
   parcels: Parcel[]
   selectedParcelId: string | null
   onSelect: (parcelId: string | null) => void
+  onLookupComplete: () => Promise<void> | void
 }
 
 function parcelDisplayValue(parcel: Parcel): string {
@@ -24,11 +26,16 @@ export function ParcelSearch({
   parcels,
   selectedParcelId,
   onSelect,
+  onLookupComplete,
 }: ParcelSearchProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [highlightedIndex, setHighlightedIndex] = useState(-1)
+  const [lookupStatus, setLookupStatus] = useState<
+    'idle' | 'searching' | 'not-found'
+  >('idle')
+  const [lookupError, setLookupError] = useState<string | null>(null)
 
   const selectedParcel = useMemo(
     () => parcels.find((p) => p.id === selectedParcelId) ?? null,
@@ -72,6 +79,32 @@ export function ParcelSearch({
     inputRef.current?.focus()
   }, [onSelect, closeDropdown])
 
+  const handleRemoteLookup = useCallback(async () => {
+    const apn = query.trim()
+    if (!apn) return
+
+    setLookupStatus('searching')
+    setLookupError(null)
+
+    try {
+      const result = await lookupParcelByApn(apn)
+      if (result.found) {
+        await onLookupComplete()
+        onSelect(result.parcelId)
+        setQuery(apn)
+        setLookupStatus('idle')
+        closeDropdown()
+      } else {
+        setLookupStatus('not-found')
+      }
+    } catch (err) {
+      setLookupError(
+        err instanceof Error ? err.message : 'Lookup failed',
+      )
+      setLookupStatus('idle')
+    }
+  }, [query, onLookupComplete, onSelect, closeDropdown])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!dropdownOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       setDropdownOpen(true)
@@ -93,7 +126,10 @@ export function ParcelSearch({
       setHighlightedIndex((i) => (i > 0 ? i - 1 : i === -1 ? count - 1 : 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (hasEmptyState) return
+      if (hasEmptyState) {
+        void handleRemoteLookup()
+        return
+      }
       const index = highlightedIndex >= 0 ? highlightedIndex : 0
       const parcel = filteredParcels[index]
       if (parcel) selectParcel(parcel)
@@ -103,6 +139,18 @@ export function ParcelSearch({
       inputRef.current?.blur()
     }
   }
+
+  const emptyStateMessage = useMemo(() => {
+    const trimmed = query.trim()
+    if (lookupError) return lookupError
+    if (lookupStatus === 'searching') {
+      return `Searching county records for ${trimmed}…`
+    }
+    if (lookupStatus === 'not-found') {
+      return `No parcel found for APN ${trimmed}.`
+    }
+    return 'No seeded match — press Enter to search county records.'
+  }, [query, lookupStatus, lookupError])
 
   return (
     <div className="relative w-full">
@@ -128,6 +176,8 @@ export function ParcelSearch({
         onChange={(e) => {
           const value = e.target.value
           setQuery(value)
+          setLookupStatus('idle')
+          setLookupError(null)
           if (value.length > 0) setDropdownOpen(true)
           if (selectedParcelId) onSelect(null)
         }}
@@ -160,7 +210,7 @@ export function ParcelSearch({
         >
           {query.trim().length > 0 && filteredParcels.length === 0 ? (
             <li className="px-3 py-2 font-sans text-sm italic text-[var(--color-slate)]">
-              No matches in seeded parcels.
+              {emptyStateMessage}
             </li>
           ) : (
             filteredParcels.map((parcel, index) => {

@@ -70,3 +70,24 @@ export async function fetchParcelWithJurisdictionAndClaims(
   // Phase 1 if we ever expose this to untrusted callers.
   return data as ParcelContext;
 }
+
+export async function lookupParcelByApn(
+  apn: string,
+): Promise<
+  | { found: true; parcelId: string; cached: boolean }
+  | { found: false }
+> {
+  const { data, error } = await supabase.functions.invoke('lookup-parcel', {
+    body: { apn },
+  });
+  if (error) {
+    throw new Error(`lookupParcelByApn failed: ${error.message}`);
+  }
+  if (data?.error) {
+    throw new Error(`lookupParcelByApn: ${data.error}`);
+  }
+  if (data?.found) {
+    return { found: true, parcelId: data.parcelId, cached: data.cached };
+  }
+  return { found: false };
+}

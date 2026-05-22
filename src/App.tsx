@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Map } from './components/Map'
 import { ParcelSearch } from './components/ParcelSearch'
 import { Sidebar } from './components/Sidebar'
@@ -9,21 +9,18 @@ function App() {
   const [selectedParcelId, setSelectedParcelId] = useState<string | null>(null)
   const [allParcels, setAllParcels] = useState<Parcel[]>([])
 
-  useEffect(() => {
-    let cancelled = false
-
-    void fetchAllParcels()
-      .then((parcels) => {
-        if (!cancelled) setAllParcels(parcels)
-      })
-      .catch(() => {
-        if (!cancelled) setAllParcels([])
-      })
-
-    return () => {
-      cancelled = true
+  const loadParcels = useCallback(async () => {
+    try {
+      const parcels = await fetchAllParcels()
+      setAllParcels(parcels)
+    } catch {
+      setAllParcels([])
     }
   }, [])
+
+  useEffect(() => {
+    void loadParcels()
+  }, [loadParcels])
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -41,6 +38,7 @@ function App() {
             parcels={allParcels}
             selectedParcelId={selectedParcelId}
             onSelect={setSelectedParcelId}
+            onLookupComplete={loadParcels}
           />
         </div>
         <div className="min-w-0 flex-1" aria-hidden />
