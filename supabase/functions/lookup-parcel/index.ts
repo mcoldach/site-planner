@@ -1,16 +1,14 @@
-// lookup-parcel: APN -> parcel. Checks local DB; on miss, fetches Colorado Public
-// Parcels (ArcGIS), validates it's in our service area (El Paso County), upserts
-// via upsert_parcel RPC, returns the parcel id.
-// Mirrors scripts/seed_parcels.ts fetch path for a single APN. Service-role only.
+// lookup-parcel: two-phase, jurisdiction-owned parcel sourcing.
+//   Phase 1 (locate): query the statewide layer for geometry + base attrs.
+//   Phase 2 (authoritative): resolve jurisdiction from geometry; if it declares a
+//     parcel_source, re-fetch the authoritative record and normalize via field_map.
+//     If none declared (or re-fetch empty), use the statewide record.
+// Service-area guard (El Paso County FIPS 041) still applies at Phase 1.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 const CO_PARCELS_QUERY =
   'https://gis.colorado.gov/public/rest/services/Address_and_Parcel/Colorado_Public_Parcels/FeatureServer/0/query'
-
-// Service area: El Paso County, CO (the pilot). FIPS 041.
-// Parcels outside this are rejected as not-found — the dataset includes
-// statewide rows (and placeholder/template rows in other counties).
 const SERVICE_AREA_FIPS = '041'
 
 const corsHeaders = {
@@ -18,12 +16,43 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
-
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
+}
+
+// Re-fetch a parcel from a jurisdiction's authoritative source and map its fields
+// into our canonical raw_attrs shape (parcel_id, situsAdd, zoningCode, ...).
+// Returns { geometry, props } or null if not found / on error.
+async function fetchAuthoritative(
+  apn: string,
+  source: { endpoint: string; apn_field: string; field_map: Record<string, string> },
+): Promise<{ geometry: unknown; props: Record<string, unknown> } | null> {
+  const where = `${source.apn_field} = '${apn.replace(/'/g, "''")}'`
+  const url = `${source.endpoint}?${new URLSearchParams({
+    where, outFields: '*', f: 'geojson', outSR: '4326',
+  })}`
+  let res: Response
+  try {
+    res = await fetch(url)
+  } catch {
+    return null
+  }
+  if (!res.ok) return null
+  const fc = await res.json().catch(() => null)
+  const feature = fc?.features?.[0]
+  if (!feature) return null
+
+  // Normalize: map each source field -> canonical key.
+  const raw = feature.properties ?? {}
+  const props: Record<string, unknown> = {}
+  for (const [canonical, sourceField] of Object.entries(source.field_map)) {
+    props[canonical] = raw[sourceField] ?? null
+  }
+  // Preserve the original source attrs too, namespaced, for provenance.
+  props.__authoritative_source = source.endpoint
+  return { geometry: feature.geometry, props }
 }
 
 Deno.serve(async (req) => {
@@ -43,46 +72,71 @@ Deno.serve(async (req) => {
       { auth: { persistSession: false, autoRefreshToken: false } },
     )
 
-    // 1. Local hit?
+    // 0. Local hit?
     const { data: existing, error: selErr } = await supabase
       .from('parcels').select('id').eq('source_apn', cleanApn).maybeSingle()
     if (selErr) return json({ error: `db: ${selErr.message}` }, 500)
     if (existing) return json({ found: true, parcelId: existing.id, cached: true })
 
-    // 2. Fetch from Colorado Public Parcels (geojson, EPSG:4326).
+    // 1. PHASE 1 — Locate via statewide layer.
     const where = `parcel_id IN ('${cleanApn.replace(/'/g, "''")}')`
-    const url = `${CO_PARCELS_QUERY}?${new URLSearchParams({
+    const locUrl = `${CO_PARCELS_QUERY}?${new URLSearchParams({
       where, outFields: '*', f: 'geojson', outSR: '4326',
     })}`
-    const res = await fetch(url)
-    if (!res.ok) return json({ error: `arcgis ${res.status}` }, 502)
-    const fc = await res.json()
-    const feature = fc?.features?.[0]
-    if (!feature) return json({ found: false })
+    const locRes = await fetch(locUrl)
+    if (!locRes.ok) return json({ error: `arcgis ${locRes.status}` }, 502)
+    const locFc = await locRes.json()
+    const locFeature = locFc?.features?.[0]
+    if (!locFeature) return json({ found: false })
 
-    const props = feature.properties ?? {}
+    const locProps = locFeature.properties ?? {}
 
-    // 2a. Service-area guard: only persist parcels in El Paso County (the pilot).
-    // The statewide dataset includes other counties and placeholder/template rows
-    // (e.g. APN 9999999999 = a Pueblo County "TEMPLATE PARCEL"). Reject those as
-    // out-of-area so we never persist a parcel we don't model.
-    const fips = String(props.countyFips ?? '').trim()
-    if (fips !== SERVICE_AREA_FIPS) {
-      return json({ found: false, reason: 'out_of_area', county: props.countyName ?? null })
+    // 1a. Service-area guard.
+    if (String(locProps.countyFips ?? '').trim() !== SERVICE_AREA_FIPS) {
+      return json({ found: false, reason: 'out_of_area', county: locProps.countyName ?? null })
     }
 
-    // 3. Upsert via existing RPC (returns the new parcel uuid).
+    // 2. PHASE 2 — Resolve jurisdiction from located geometry.
+    const { data: juris, error: jErr } = await supabase.rpc(
+      'resolve_jurisdiction_for_geometry', { _geojson: locFeature.geometry },
+    )
+    if (jErr) return json({ error: `resolve: ${jErr.message}` }, 500)
+
+    // Default: use the statewide-located record.
+    let geometry = locFeature.geometry
+    let props: Record<string, unknown> = locProps
+    let authoritativeSource: string | null = null
+
+    // If the jurisdiction declares a parcel_source, re-fetch authoritatively.
+    const source = juris?.parcel_source
+    if (source && source.endpoint) {
+      const auth = await fetchAuthoritative(cleanApn, source)
+      if (auth) {
+        geometry = auth.geometry
+        props = auth.props
+        authoritativeSource = source.endpoint
+      }
+      // else: re-fetch empty/failed -> fall back to statewide record (already set).
+    }
+
+    // 3. Upsert the chosen record.
     const { data: newId, error: rpcErr } = await supabase.rpc('upsert_parcel', {
       _source_apn: cleanApn,
-      _source_system: 'co_public_parcels',
-      _geojson: feature.geometry,
+      _source_system: authoritativeSource ? 'cos_landrecords' : 'co_public_parcels',
+      _geojson: geometry,
       _raw_attrs: props,
       _retrieved_at: new Date().toISOString(),
-      _source_url: url,
+      _source_url: authoritativeSource ?? locUrl,
     })
     if (rpcErr) return json({ error: `upsert: ${rpcErr.message}` }, 500)
 
-    return json({ found: true, parcelId: newId, cached: false })
+    return json({
+      found: true,
+      parcelId: newId,
+      cached: false,
+      jurisdiction: juris?.slug ?? null,
+      authoritative: authoritativeSource !== null,
+    })
   } catch (e) {
     return json({ error: String(e) }, 500)
   }
