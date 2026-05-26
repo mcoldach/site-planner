@@ -1,5 +1,6 @@
 import { ParcelSearch } from './ParcelSearch'
 import type { Parcel } from '../lib/types'
+import { useAuth } from '../lib/auth'
 
 export type AppMode = 'projects' | 'parcels'
 
@@ -75,6 +76,8 @@ export function Header({
   onLookupComplete,
   onNewProject,
 }: HeaderProps) {
+  const { signOut } = useAuth()
+
   return (
     <header className="hairline flex h-14 shrink-0 items-center border-t-0 border-l-0 border-r-0 bg-[var(--color-canvas)] px-6">
       <h1 className="shrink-0 font-serif text-base leading-none text-[var(--color-ink)]">
@@ -98,6 +101,14 @@ export function Header({
         ) : (
           <NewProjectControl onClick={onNewProject} />
         )}
+
+        <button
+          type="button"
+          onClick={() => void signOut()}
+          className="ml-6 font-mono text-[11px] text-[var(--color-slate)] hover:text-[var(--color-graphite)]"
+        >
+          Sign out
+        </button>
       </div>
     </header>
   )
