@@ -8,6 +8,8 @@ type ParcelSearchProps = {
   selectedParcelId: string | null
   onSelect: (parcelId: string | null) => void
   onLookupComplete: () => Promise<void> | void
+  /** Optional placeholder override; defaults to the Parcels-mode prompt. */
+  placeholder?: string
 }
 
 function parcelDisplayValue(parcel: Parcel): string {
@@ -27,6 +29,7 @@ export function ParcelSearch({
   selectedParcelId,
   onSelect,
   onLookupComplete,
+  placeholder = 'Address or parcel number…',
 }: ParcelSearchProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
@@ -168,7 +171,7 @@ export function ParcelSearch({
         type="search"
         name="q"
         value={query}
-        placeholder="Address or parcel number…"
+        placeholder={placeholder}
         autoComplete="off"
         className={`hairline w-full rounded-sm bg-white py-2 pl-9 font-sans text-sm text-[var(--color-ink)] placeholder:text-[var(--color-slate)] ${
           selectedParcelId ? 'pr-9' : 'pr-3'

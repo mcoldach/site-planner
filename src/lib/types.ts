@@ -77,3 +77,10 @@ export type ParcelContext = {
   classification: Classification;
   claims: Claim[];
 };
+
+export type Project = {
+  id: string;
+  name: string;
+  geometry: GeoJSON.Geometry;
+  centroid: GeoJSON.Point;
+};

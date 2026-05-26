@@ -1,142 +1,11 @@
-import { ArrowUpRight } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { ClaimsList } from './ClaimsList'
-import { ZoningCoverage } from './ZoningCoverage'
+import { useEffect, useState } from 'react'
+import { ParcelContextPanel } from './ParcelContextPanel'
 import { fetchParcelWithJurisdictionAndClaims } from '../lib/data'
-import type {
-  AuthorityType,
-  Claim,
-  Jurisdiction,
-  Parcel,
-  ParcelContext,
-  ZoneCode,
-} from '../lib/types'
+import type { Parcel, ParcelContext } from '../lib/types'
 
 type SidebarProps = {
   selectedParcelId: string | null
   allParcels: Parcel[]
-}
-
-function HairlineRule() {
-  return <div className="my-4 border-t border-[var(--color-fog)]" aria-hidden />
-}
-
-function authorityTypeLabel(type: AuthorityType): string {
-  switch (type) {
-    case 'municipal':
-      return 'Municipal (city)'
-    case 'county_unincorporated':
-      return 'County — unincorporated territory'
-    default:
-      return type
-  }
-}
-
-function formatRetrievedDate(iso: string): string {
-  return iso.slice(0, 10)
-}
-
-type ParcelHeaderProps = {
-  parcel: Parcel
-  baseCodes: ZoneCode[]
-}
-
-function ParcelHeader({ parcel, baseCodes }: ParcelHeaderProps) {
-  const codes = baseCodes.map((b) => b.code)
-  const zoneLabel = codes.length >= 2 ? 'Zones:' : 'Zone:'
-  const zoneValue =
-    codes.length === 0
-      ? (parcel.zone_district_code ?? '—')
-      : codes.length === 1
-        ? codes[0]
-        : codes.join(', ')
-
-  return (
-    <header>
-      <h2 className="font-serif text-lg text-[var(--color-ink)]">
-        {parcel.label ?? parcel.source_apn}
-      </h2>
-      <p className="mt-1 font-mono text-xs text-[var(--color-slate)]">
-        APN: {parcel.source_apn} &nbsp;&nbsp;·&nbsp;&nbsp; {zoneLabel}{' '}
-        {zoneValue}
-      </p>
-    </header>
-  )
-}
-
-type JurisdictionBlockProps = {
-  jurisdiction: Jurisdiction
-}
-
-function JurisdictionBlock({ jurisdiction }: JurisdictionBlockProps) {
-  const codeLine = (
-    <>
-      Code:{' '}
-      {jurisdiction.code_home_url && jurisdiction.code_label ? (
-        <a
-          href={jurisdiction.code_home_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[var(--color-slate)] hover:text-[var(--color-accent)] hover:underline"
-        >
-          {jurisdiction.code_label}
-          <ArrowUpRight
-            className="ml-0.5 inline-block align-text-top"
-            size={10}
-            aria-hidden
-          />
-        </a>
-      ) : (
-        <span>{jurisdiction.code_label ?? '—'}</span>
-      )}
-      {jurisdiction.current_code_version
-        ? ` · ${jurisdiction.current_code_version}`
-        : null}
-    </>
-  )
-
-  return (
-    <section>
-      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
-        GOVERNED BY
-      </p>
-      <p className="mt-1 font-serif text-base text-[var(--color-ink)]">
-        {jurisdiction.name}
-      </p>
-      <p className="mt-0.5 font-sans text-xs text-[var(--color-slate)]">
-        {authorityTypeLabel(jurisdiction.authority_type)}
-      </p>
-      <p className="mt-1 font-mono text-xs text-[var(--color-slate)]">
-        {codeLine}
-      </p>
-    </section>
-  )
-}
-
-type ProvenanceFooterProps = {
-  claims: Claim[]
-  parcelRetrievedAt: string
-}
-
-function ProvenanceFooter({ claims, parcelRetrievedAt }: ProvenanceFooterProps) {
-  const uniqueSourceCount = useMemo(
-    () => new Set(claims.map((c) => c.source_snapshot.url)).size,
-    [claims],
-  )
-
-  return (
-    <footer className="mt-2">
-      <p className="font-mono text-[10px] text-[var(--color-slate)]">
-        {claims.length} {claims.length === 1 ? 'claim' : 'claims'} ·{' '}
-        {uniqueSourceCount} {uniqueSourceCount === 1 ? 'source' : 'sources'} ·
-        retrieved {formatRetrievedDate(parcelRetrievedAt)}
-      </p>
-      <p className="mt-1 text-sm italic text-[var(--color-mist)]">
-        Feasibility-grade · not a substitute for a licensed survey or legal
-        opinion
-      </p>
-    </footer>
-  )
 }
 
 function EmptyState() {
@@ -201,37 +70,7 @@ export function Sidebar({ selectedParcelId, allParcels: _allParcels }: SidebarPr
       ) : error ? (
         <p className="text-sm text-[var(--color-slate)]">{error}</p>
       ) : context ? (
-        <>
-          <ParcelHeader
-            parcel={context.parcel}
-            baseCodes={context.classification.base_codes}
-          />
-          <HairlineRule />
-          {context.jurisdiction ? (
-            <JurisdictionBlock jurisdiction={context.jurisdiction} />
-          ) : (
-            <p className="font-sans text-xs text-[var(--color-slate)]">
-              No jurisdiction resolved for this parcel.
-            </p>
-          )}
-          {context.classification.overlay_codes.length > 0 ||
-          context.classification.unclassified_codes.length > 0 ? (
-            <>
-              <HairlineRule />
-              <ZoningCoverage classification={context.classification} />
-            </>
-          ) : null}
-          <HairlineRule />
-          <ClaimsList
-            claims={context.claims}
-            baseCodes={context.classification.base_codes}
-          />
-          <HairlineRule />
-          <ProvenanceFooter
-            claims={context.claims}
-            parcelRetrievedAt={context.parcel.retrieved_at}
-          />
-        </>
+        <ParcelContextPanel {...context} />
       ) : null}
     </aside>
   )

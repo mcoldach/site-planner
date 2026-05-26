@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Header, type AppMode } from './components/Header'
 import { Map } from './components/Map'
-import { ProjectsSidebar } from './components/ProjectsSidebar'
+import { ProjectModal } from './components/ProjectModal'
+import { ProjectWorkspace } from './components/ProjectWorkspace'
 import { Sidebar } from './components/Sidebar'
 import { fetchAllParcels } from './lib/data'
 import type { Parcel } from './lib/types'
@@ -9,7 +10,12 @@ import type { Parcel } from './lib/types'
 function App() {
   const [mode, setMode] = useState<AppMode>('parcels')
   const [selectedParcelId, setSelectedParcelId] = useState<string | null>(null)
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    null,
+  )
   const [allParcels, setAllParcels] = useState<Parcel[]>([])
+  const [isProjectModalOpen, setProjectModalOpen] = useState(false)
+  const [projectsToken, setProjectsToken] = useState(0)
 
   const loadParcels = useCallback(async () => {
     try {
@@ -33,16 +39,17 @@ function App() {
         selectedParcelId={selectedParcelId}
         onSelectParcel={setSelectedParcelId}
         onLookupComplete={loadParcels}
-        onNewProject={() => {
-          // Placeholder — project creation lands in a later phase.
-        }}
+        onNewProject={() => setProjectModalOpen(true)}
       />
 
       <main className="flex min-h-0 flex-1">
         <div className="relative min-h-0 min-w-0 flex-1">
           <Map
+            mode={mode}
             selectedParcelId={selectedParcelId}
             onParcelClick={setSelectedParcelId}
+            onProjectClick={setSelectedProjectId}
+            refreshProjectsToken={projectsToken}
           />
         </div>
         {mode === 'parcels' ? (
@@ -51,9 +58,22 @@ function App() {
             allParcels={allParcels}
           />
         ) : (
-          <ProjectsSidebar />
+          <ProjectWorkspace
+            projectId={selectedProjectId}
+            onClose={() => setSelectedProjectId(null)}
+          />
         )}
       </main>
+
+      <ProjectModal
+        isOpen={isProjectModalOpen}
+        onClose={() => setProjectModalOpen(false)}
+        onCreated={() => {
+          setProjectsToken((n) => n + 1)
+        }}
+        parcels={allParcels}
+        onLookupComplete={loadParcels}
+      />
     </div>
   )
 }
