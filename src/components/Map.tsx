@@ -169,6 +169,11 @@ type MapProps = {
   drawMode: boolean;
   onFootprintDrawn: (geojson: GeoJSON.Polygon) => void;
   savedSchemeFootprint: GeoJSON.Polygon | null;
+  // When non-null, this polygon is loaded into Terra Draw's store and
+  // selected so the user can drag/rotate/edit it. The parent is responsible
+  // for hiding the matching saved-scheme static layer to avoid doubling.
+  // Cleared (null) to remove the editing feature from Terra Draw.
+  editingFootprint: GeoJSON.Polygon | null;
 };
 
 export function Map({
@@ -180,6 +185,7 @@ export function Map({
   drawMode,
   onFootprintDrawn,
   savedSchemeFootprint,
+  editingFootprint,
 }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -204,6 +210,16 @@ export function Map({
   drawModeRef.current = drawMode;
   const onFootprintDrawnRef = useRef(onFootprintDrawn);
   onFootprintDrawnRef.current = onFootprintDrawn;
+  // The feature id Terra Draw assigned to the polygon currently being
+  // edited. Tracked separately so we can scope removeFeatures() to just the
+  // editing feature on edit-end and not nuke unrelated draft features.
+  const editingFeatureIdRef = useRef<FeatureId | null>(null);
+  // Latest-value mirror so the async onLoad closure can apply the initial
+  // editing state if the prop was already set when Terra Draw was created.
+  const editingFootprintRef = useRef<GeoJSON.Polygon | null>(editingFootprint);
+  useEffect(() => {
+    editingFootprintRef.current = editingFootprint;
+  });
   // The saved-scheme source is created inside onLoad's async closure, which
   // doesn't see prop updates. Sync the ref via an effect (the canonical
   // "latest value" pattern) so the source.data reflects whatever the prop
@@ -525,9 +541,25 @@ export function Map({
 
           // Sync the initial draw mode here because the mode/drawMode effect
           // that controls Terra Draw's mode ran before drawRef was populated
-          // by this async load. Only enable drawing in Projects mode — this
-          // is the same guard the effect applies.
-          if (modeRef.current === 'projects' && drawModeRef.current) {
+          // by this async load. Editing takes precedence over drawMode: if a
+          // footprint was already handed in at mount, load it and drop into
+          // select mode before the polygon-mode toggle gets a chance.
+          const initialEditing = editingFootprintRef.current;
+          if (modeRef.current === 'projects' && initialEditing) {
+            const result = draw.addFeatures([
+              {
+                type: 'Feature',
+                properties: { mode: 'polygon' },
+                geometry: initialEditing,
+              },
+            ]);
+            const newId = result[0]?.id;
+            if (newId !== undefined) {
+              editingFeatureIdRef.current = newId;
+              draw.setMode('select');
+              draw.selectFeature(newId);
+            }
+          } else if (modeRef.current === 'projects' && drawModeRef.current) {
             draw.setMode('polygon');
           }
 
@@ -634,12 +666,65 @@ export function Map({
     // 'select' mode. That state survives until drawMode flips here (or app
     // mode leaves Projects), at which point the polygon is locked into
     // 'static' and remains rendered but non-interactive.
+    //
+    // Editing wins over both new-draw and idle: while a scheme is being
+    // edited the editing-load effect below owns the mode (it switches to
+    // 'select' and keeps the feature selected). Short-circuit here so we
+    // don't clobber that with 'polygon' or 'static'.
+    if (editingFootprint) return;
     if (mode === 'projects' && drawMode) {
       draw.setMode('polygon');
     } else {
       draw.setMode('static');
     }
-  }, [mode, drawMode]);
+  }, [mode, drawMode, editingFootprint]);
+
+  // Load (or clear) a scheme footprint into Terra Draw for editing. When the
+  // prop transitions from null → polygon, the polygon is added to the
+  // instance, Terra Draw switches to select mode, and the new feature is
+  // selected so drag/rotate/vertex handles appear without a click. When the
+  // prop transitions back to null (save or cancel), the editing feature is
+  // removed; the mode effect above then restores 'static' or 'polygon'.
+  //
+  // The parent must hide the matching saved-scheme static layer while
+  // editing, otherwise the user sees two identical polygons.
+  useEffect(() => {
+    const map = mapRef.current;
+    const draw = drawRef.current;
+    if (!map || !layersReadyRef.current || !draw) return;
+
+    if (editingFootprint) {
+      // Drop any prior draft features (V1: one footprint at a time) before
+      // injecting the editing polygon so the editor sees only this geometry.
+      const existing = draw
+        .getSnapshot()
+        .map((f) => f.id)
+        .filter((id): id is FeatureId => id !== undefined);
+      if (existing.length > 0) {
+        draw.removeFeatures(existing);
+      }
+
+      const result = draw.addFeatures([
+        {
+          type: 'Feature',
+          properties: { mode: 'polygon' },
+          geometry: editingFootprint,
+        },
+      ]);
+      const newId = result[0]?.id;
+      if (newId !== undefined) {
+        editingFeatureIdRef.current = newId;
+        draw.setMode('select');
+        draw.selectFeature(newId);
+      }
+    } else {
+      const editingId = editingFeatureIdRef.current;
+      if (editingId !== null && draw.hasFeature(editingId)) {
+        draw.removeFeatures([editingId]);
+      }
+      editingFeatureIdRef.current = null;
+    }
+  }, [editingFootprint]);
 
   useEffect(() => {
     const map = mapRef.current;

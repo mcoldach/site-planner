@@ -5,9 +5,11 @@ import { ComplianceResults } from './ComplianceResults'
 import { ParcelContextPanel } from './ParcelContextPanel'
 import {
   checkSchemeCompliance,
+  deleteScheme,
   fetchProjectContext,
   fetchProjectSchemes,
   saveScheme,
+  updateScheme,
 } from '../lib/data'
 import type {
   Classification,
@@ -28,6 +30,11 @@ type ProjectWorkspaceProps = {
   drawnFootprint: GeoJSON.Polygon | null
   onClearFootprint: () => void
   onCurrentSchemeFootprint: (footprint: GeoJSON.Polygon | null) => void
+  // Workspace → App: push the polygon to load into Terra Draw for edit
+  // (start of session) or null (save / cancel). App relays it to Map. The
+  // workspace doesn't read editingFootprint back from App — its own
+  // editingSchemeId state is the source of truth for "am I editing".
+  onEditingFootprintChange: (footprint: GeoJSON.Polygon | null) => void
 }
 
 function EmptyState() {
@@ -427,10 +434,252 @@ function SchemeSection({
   )
 }
 
+type SchemeActionsProps = {
+  // Hidden during an active edit session (the edit UI provides its own
+  // Save / Cancel and a Delete during edit would be ambiguous). On the
+  // delete-confirm row visibility stays true; the edit/delete pair is
+  // simply swapped for the inline confirmation prompt.
+  visible: boolean
+  confirmingDelete: boolean
+  deleting: boolean
+  deleteError: string | null
+  onStartEdit: () => void
+  onRequestDelete: () => void
+  onConfirmDelete: () => void
+  onCancelDelete: () => void
+}
+
+// Tiny mono action row that sits directly under the scheme selector. Edit
+// and Delete are both rendered restrained (slate, mono, no border) so they
+// don't compete with the dropdown trigger above; Delete is destructive but
+// not loud — confirmation is what gates the action, not visual weight.
+function SchemeActions({
+  visible,
+  confirmingDelete,
+  deleting,
+  deleteError,
+  onStartEdit,
+  onRequestDelete,
+  onConfirmDelete,
+  onCancelDelete,
+}: SchemeActionsProps) {
+  if (!visible && !confirmingDelete) return null
+
+  if (confirmingDelete) {
+    return (
+      <div className="mt-2 flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+        <span className="font-sans text-xs text-[var(--color-graphite)]">
+          Delete this scheme?
+        </span>
+        <button
+          type="button"
+          onClick={onConfirmDelete}
+          disabled={deleting}
+          className={`font-mono text-[10px] uppercase tracking-[0.08em] ${
+            deleting
+              ? 'cursor-not-allowed text-[var(--color-mist)]'
+              : 'text-[var(--color-ink)] hover:underline'
+          }`}
+        >
+          {deleting ? 'Deleting…' : 'Delete'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancelDelete}
+          disabled={deleting}
+          className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)] hover:text-[var(--color-ink)]"
+        >
+          Cancel
+        </button>
+        {deleteError ? (
+          <p className="w-full text-right font-sans text-xs text-[var(--color-ink)]">
+            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-graphite)]">
+              Error ·{' '}
+            </span>
+            {deleteError}
+          </p>
+        ) : null}
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-2 flex items-center justify-end gap-3">
+      <button
+        type="button"
+        onClick={onStartEdit}
+        className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)] hover:text-[var(--color-ink)]"
+      >
+        Edit
+      </button>
+      <span aria-hidden className="text-[var(--color-fog)]">
+        ·
+      </span>
+      <button
+        type="button"
+        onClick={onRequestDelete}
+        className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)] hover:text-[var(--color-ink)]"
+      >
+        Delete
+      </button>
+    </div>
+  )
+}
+
+type EditSchemeSectionProps = {
+  scheme: Scheme
+  name: string
+  height: string
+  // The live edited polygon from Terra Draw. Starts equal to scheme.footprint
+  // at edit-start and updates with every drag/vertex change via the existing
+  // onFootprintDrawn pipeline. null means the editing feature was somehow
+  // cleared mid-edit — in practice that shouldn't happen, but the UI guards
+  // against it by disabling Save.
+  editedFootprint: GeoJSON.Polygon | null
+  saving: boolean
+  error: string | null
+  onNameChange: (next: string) => void
+  onHeightChange: (next: string) => void
+  onSave: () => void
+  onCancel: () => void
+}
+
+// In-place edit panel. Mirrors SchemeSection's name/height/footprint
+// rendering for visual continuity, but the Save button calls updateScheme
+// rather than saveScheme, and the "Draft footprint" label reads "Editing
+// footprint" so the user can tell which flow they're in.
+function EditSchemeSection({
+  scheme,
+  name,
+  height,
+  editedFootprint,
+  saving,
+  error,
+  onNameChange,
+  onHeightChange,
+  onSave,
+  onCancel,
+}: EditSchemeSectionProps) {
+  const heightFt = Number.parseFloat(height)
+  const heightValid = Number.isFinite(heightFt) && heightFt > 0
+  const footprintSf = useMemo(
+    () => (editedFootprint ? footprintSquareFeet(editedFootprint) : null),
+    [editedFootprint],
+  )
+  const canSave =
+    Boolean(editedFootprint) && name.trim() !== '' && heightValid && !saving
+
+  const saveClass = [
+    'rounded-sm px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] transition-colors',
+    canSave
+      ? 'bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-soft)]'
+      : 'cursor-not-allowed bg-[var(--color-fog)] text-[var(--color-mist)]',
+  ].join(' ')
+
+  const cancelClass =
+    'rounded-sm px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] hairline bg-white text-[var(--color-ink)] hover:bg-[var(--color-canvas)] transition-colors'
+
+  return (
+    <section>
+      <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
+        EDITING SCHEME
+      </p>
+
+      <p className="font-sans text-xs italic text-[var(--color-slate)]">
+        Drag the polygon, its vertices, or the rotation handle on the map.
+        Changes save in place to "{scheme.name || 'Untitled scheme'}".
+      </p>
+
+      {footprintSf !== null ? (
+        <div className="mt-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
+            Editing footprint
+          </p>
+          <p
+            className="mt-0.5 font-serif text-2xl leading-none text-[var(--color-ink)]"
+            style={{ fontVariantNumeric: 'tabular-nums' }}
+          >
+            {formatSquareFeet(footprintSf)}{' '}
+            <span className="font-mono text-xs text-[var(--color-slate)]">
+              SF
+            </span>
+          </p>
+          <GfaLine footprintSf={footprintSf} heightFt={heightFt} />
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid grid-cols-[1fr_5rem] gap-3">
+        <label className="block">
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
+            Name
+          </span>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => onNameChange(e.target.value)}
+            className="hairline mt-1 w-full rounded-sm bg-white px-2 py-1 font-sans text-sm text-[var(--color-ink)]"
+          />
+        </label>
+        <label className="block">
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
+            Height
+          </span>
+          <div className="mt-1 flex items-baseline">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={height}
+              onChange={(e) => onHeightChange(e.target.value)}
+              className="hairline w-full rounded-sm bg-white px-2 py-1 font-sans text-sm text-[var(--color-ink)]"
+              style={{ fontVariantNumeric: 'tabular-nums' }}
+            />
+            <span className="ml-1 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
+              ft
+            </span>
+          </div>
+        </label>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={!canSave}
+          className={saveClass}
+        >
+          {saving ? 'Saving…' : 'Save changes'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          className={cancelClass}
+        >
+          Cancel
+        </button>
+      </div>
+
+      {error ? (
+        <p className="mt-2 font-sans text-xs text-[var(--color-ink)]">
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-graphite)]">
+            Error ·{' '}
+          </span>
+          {error}
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
 type SchemeSelectorProps = {
   schemes: Scheme[]
   selectedId: string | null
   onSelect: (id: string) => void
+  // While editing a scheme, the dropdown is disabled so the user can't
+  // switch out mid-edit and silently drop their unsaved changes. They must
+  // save or cancel first.
+  disabled?: boolean
 }
 
 // Compact custom dropdown that lets the user switch which saved scheme is
@@ -442,15 +691,27 @@ type SchemeSelectorProps = {
 // deliberately omitted to avoid fanning out N compliance RPCs just to render
 // a chooser; compliance is fetched once for the *selected* scheme by
 // SavedSchemeSummary.
-function SchemeSelector({ schemes, selectedId, onSelect }: SchemeSelectorProps) {
+function SchemeSelector({
+  schemes,
+  selectedId,
+  onSelect,
+  disabled = false,
+}: SchemeSelectorProps) {
   const [open, setOpen] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
   const selected =
     schemes.find((s) => s.id === selectedId) ?? schemes[0] ?? null
 
+  // Effective open state: clamp shut while disabled so the parent's "frozen
+  // dropdown" intent doesn't require an effect-driven setOpen(false). The
+  // raw `open` state is preserved so re-enabling restores the prior view —
+  // but in practice disabled flips are tied to edit start/end, which the
+  // user can't trigger from inside the popover.
+  const popoverOpen = open && !disabled
+
   useEffect(() => {
-    if (!open) return
+    if (!popoverOpen) return
     const handleMouseDown = (event: MouseEvent) => {
       if (
         wrapperRef.current &&
@@ -468,7 +729,7 @@ function SchemeSelector({ schemes, selectedId, onSelect }: SchemeSelectorProps) 
       document.removeEventListener('mousedown', handleMouseDown)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [open])
+  }, [popoverOpen])
 
   if (!selected) return null
 
@@ -479,23 +740,32 @@ function SchemeSelector({ schemes, selectedId, onSelect }: SchemeSelectorProps) 
       </p>
       <button
         type="button"
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => {
+          if (disabled) return
+          setOpen((prev) => !prev)
+        }}
         aria-haspopup="listbox"
-        aria-expanded={open}
-        className="hairline mt-1.5 flex w-full items-center justify-between gap-2 rounded-sm bg-[var(--color-canvas)] px-2.5 py-1.5 text-left"
+        aria-expanded={popoverOpen}
+        aria-disabled={disabled}
+        disabled={disabled}
+        className={`hairline mt-1.5 flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left ${
+          disabled
+            ? 'cursor-not-allowed bg-[var(--color-fog)] text-[var(--color-mist)]'
+            : 'bg-[var(--color-canvas)]'
+        }`}
       >
         <span className="min-w-0 truncate font-sans text-sm text-[var(--color-ink)]">
           {selected.name || 'Untitled scheme'}
         </span>
         <ChevronDown
           className={`size-3.5 shrink-0 text-[var(--color-slate)] transition-transform ${
-            open ? 'rotate-180' : ''
+            popoverOpen ? 'rotate-180' : ''
           }`}
           strokeWidth={2}
           aria-hidden
         />
       </button>
-      {open ? (
+      {popoverOpen ? (
         <ul
           role="listbox"
           className="hairline absolute left-0 right-0 top-full z-20 mt-1 max-h-[260px] overflow-y-auto border bg-[var(--color-canvas)]"
@@ -549,6 +819,7 @@ type LoadedProjectWorkspaceProps = {
   drawnFootprint: GeoJSON.Polygon | null
   onClearFootprint: () => void
   onCurrentSchemeFootprint: (footprint: GeoJSON.Polygon | null) => void
+  onEditingFootprintChange: (footprint: GeoJSON.Polygon | null) => void
 }
 
 function LoadedProjectWorkspace({
@@ -560,6 +831,7 @@ function LoadedProjectWorkspace({
   drawnFootprint,
   onClearFootprint,
   onCurrentSchemeFootprint,
+  onEditingFootprintChange,
 }: LoadedProjectWorkspaceProps) {
   const [project, setProject] = useState<{ id: string; name: string } | null>(
     null,
@@ -568,17 +840,52 @@ function LoadedProjectWorkspace({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [schemes, setSchemes] = useState<Scheme[]>([])
-  // Bumped after each save so the schemes-refetch effect re-runs. Routed
-  // through a token (rather than calling a refetch function directly inside
-  // an effect) so all setState happens inside .then/.catch callbacks, which
-  // is the pattern the codebase's lint posture rewards.
+  // Bumped after each save / update / delete so the schemes-refetch effect
+  // re-runs. Routed through a token (rather than calling a refetch function
+  // directly inside an effect) so all setState happens inside .then/.catch
+  // callbacks, which is the pattern the codebase's lint posture rewards.
   const [schemesToken, setSchemesToken] = useState(0)
+  // What to do with the selection AFTER the next refetch lands. Carried in a
+  // ref (not state) so it doesn't add to the effect's dependency list and so
+  // we can read-then-clear inside the .then callback without a second render.
+  //   - 'newest':   a new scheme was inserted → jump to the newest (head of
+  //                 the desc-ordered list) so SavedSchemeSummary shows the
+  //                 scheme the user just saved.
+  //   - 'preserve': an existing scheme was updated in place → keep current
+  //                 selection (the auto-sync effect below also keeps it
+  //                 since the id is still in the list).
+  //   - null:       deletion or any other refetch → let auto-sync below
+  //                 pick list[0] if the previous selection vanished.
+  const postRefetchActionRef = useRef<'newest' | 'preserve' | null>(null)
   // Which saved scheme is "current". Null means "no preference" → defaults
   // to the most recent (schemes[0]). Schemes are fetched desc by created_at,
   // so head-of-list is canonical when nothing is explicitly selected.
   const [selectedSchemeId, setSelectedSchemeId] = useState<string | null>(null)
   const currentScheme: Scheme | null =
     schemes.find((s) => s.id === selectedSchemeId) ?? schemes[0] ?? null
+
+  // Editing session state (in-place edit of an existing saved scheme). When
+  // editingSchemeId is non-null the workspace swaps the SavedSchemeSummary
+  // for an EditSchemeSection and hides the new-scheme SchemeSection; the
+  // edited polygon lives in Terra Draw (via editingFootprint up-prop) and
+  // its live geometry flows back through drawnFootprint.
+  const [editingSchemeId, setEditingSchemeId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
+  const [editingHeight, setEditingHeight] = useState('')
+  const [editError, setEditError] = useState<string | null>(null)
+  const [savingEdit, setSavingEdit] = useState(false)
+  // Latest-value mirror so the schemes-refetch .then callback can detect
+  // "edit target disappeared" without re-running the fetch effect whenever
+  // editingSchemeId changes.
+  const editingSchemeIdRef = useRef<string | null>(editingSchemeId)
+  useEffect(() => {
+    editingSchemeIdRef.current = editingSchemeId
+  })
+  // Inline delete confirm (no native confirm()). Holds the id of the scheme
+  // pending confirmation; null = no confirm visible.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   // Initial load: project context + schemes in parallel. Schemes failure is
   // swallowed to [] so a transient view-side hiccup doesn't blank the whole
@@ -612,24 +919,42 @@ function LoadedProjectWorkspace({
     }
   }, [projectId])
 
-  // Refetch schemes after a save. The initial value of `schemesToken` is 0,
-  // and the initial-load effect above seeds `schemes`; this effect short-
-  // circuits on the initial run to avoid a duplicate fetch.
+  // Refetch schemes after a save / update / delete. The initial value of
+  // `schemesToken` is 0, and the initial-load effect above seeds `schemes`;
+  // this effect short-circuits on the initial run to avoid a duplicate fetch.
   //
-  // After a successful refetch the newest scheme (head of the desc-ordered
-  // list) auto-becomes the current selection — the user just drew + saved it,
-  // so the workspace should show its compliance, not whatever was selected
-  // before. The save-id sync intentionally lives here (in the .then callback)
-  // rather than in `onSchemeSaved`, so the selection only changes once the
-  // server has actually confirmed the new scheme is on the list.
+  // The selection policy after refetch is encoded in `postRefetchActionRef`
+  // (read-then-cleared inside the .then callback). The save-id sync
+  // intentionally lives here rather than in onSchemeSaved/onSchemeUpdated so
+  // the selection only changes once the server has actually confirmed the
+  // new list. For deletes we leave the action null and rely on the auto-
+  // sync effect below to pick a sensible fallback when the prior selection
+  // is no longer in the list.
   useEffect(() => {
     if (schemesToken === 0) return
     let cancelled = false
     void fetchProjectSchemes(projectId)
       .then((list) => {
         if (cancelled) return
+        const action = postRefetchActionRef.current
+        postRefetchActionRef.current = null
         setSchemes(list)
-        if (list[0]) setSelectedSchemeId(list[0].id)
+        if (action === 'newest' && list[0]) {
+          setSelectedSchemeId(list[0].id)
+        }
+        // If the edit target was just deleted (or otherwise vanished from
+        // the refetched list), abandon the edit session so the UI doesn't
+        // keep referencing a stale scheme. Doing this in the .then callback
+        // (rather than a separate effect that watches schemes) keeps the
+        // setState calls outside an effect body.
+        const editingId = editingSchemeIdRef.current
+        if (editingId !== null && !list.some((s) => s.id === editingId)) {
+          setEditingSchemeId(null)
+          setEditingName('')
+          setEditingHeight('')
+          setEditError(null)
+          onEditingFootprintChange(null)
+        }
       })
       .catch(() => {
         if (!cancelled) setSchemes([])
@@ -637,7 +962,7 @@ function LoadedProjectWorkspace({
     return () => {
       cancelled = true
     }
-  }, [schemesToken, projectId])
+  }, [schemesToken, projectId, onEditingFootprintChange])
 
   // Keep selectedSchemeId in sync with the list: if the previously selected
   // scheme disappears (e.g. switched projects, future delete) or no selection
@@ -680,6 +1005,92 @@ function LoadedProjectWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  function handleStartEdit(scheme: Scheme) {
+    // Stop drawing first so polygon-mode doesn't fight with select-mode in
+    // Terra Draw (the editing-load effect in Map switches to select; if
+    // drawMode is still on, exiting the edit later would snap back to
+    // polygon, which we don't want).
+    if (drawMode) onToggleDraw(false)
+    setConfirmDeleteId(null)
+    setDeleteError(null)
+    setEditError(null)
+    setEditingSchemeId(scheme.id)
+    setEditingName(scheme.name)
+    setEditingHeight(String(scheme.height_ft))
+    // Pushes the polygon up to App, which mirrors it into drawnFootprint
+    // and sends it to Map; Map then loads it into Terra Draw + select mode.
+    onEditingFootprintChange(scheme.footprint)
+  }
+
+  function handleCancelEdit() {
+    setEditingSchemeId(null)
+    setEditingName('')
+    setEditingHeight('')
+    setEditError(null)
+    setSavingEdit(false)
+    onEditingFootprintChange(null)
+  }
+
+  async function handleSaveEdit() {
+    if (editingSchemeId === null) return
+    const trimmed = editingName.trim()
+    const heightFt = Number.parseFloat(editingHeight)
+    if (!trimmed || !Number.isFinite(heightFt) || heightFt <= 0) return
+    if (!drawnFootprint) return
+
+    setSavingEdit(true)
+    setEditError(null)
+    try {
+      await updateScheme(editingSchemeId, trimmed, drawnFootprint, heightFt)
+      // Preserve the current selection: an update doesn't change created_at,
+      // so the scheme's position in the desc list is stable.
+      postRefetchActionRef.current = 'preserve'
+      setSchemesToken((n) => n + 1)
+      // Hand the edited geometry to App's static-layer prop in the same
+      // batch as the editing teardown. Without this, the saved-scheme layer
+      // would reappear (because editingFootprint flipped to null) showing
+      // the pre-edit geometry until the async refetch lands — a visible
+      // snap-back. When the refetch resolves, currentScheme.footprint equals
+      // drawnFootprint here, so the auto-sync push is a no-op.
+      onCurrentSchemeFootprint(drawnFootprint)
+      onEditingFootprintChange(null)
+      setEditingSchemeId(null)
+      setEditingName('')
+      setEditingHeight('')
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  async function handleConfirmDelete(schemeId: string) {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      // If the scheme being deleted is also being edited, abandon the edit
+      // before the row goes away.
+      if (editingSchemeId === schemeId) {
+        onEditingFootprintChange(null)
+        setEditingSchemeId(null)
+        setEditingName('')
+        setEditingHeight('')
+      }
+      await deleteScheme(schemeId)
+      // After delete: the auto-sync effect below picks list[0] when the
+      // previous selection is gone, so no explicit post-refetch action.
+      setSelectedSchemeId((current) =>
+        current === schemeId ? null : current,
+      )
+      setSchemesToken((n) => n + 1)
+      setConfirmDeleteId(null)
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : 'Delete failed')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   if (loading) {
     return (
       <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
@@ -716,21 +1127,60 @@ function LoadedProjectWorkspace({
                 schemes={schemes}
                 selectedId={selectedSchemeId}
                 onSelect={setSelectedSchemeId}
+                disabled={editingSchemeId !== null}
+              />
+              <SchemeActions
+                visible={editingSchemeId === null}
+                confirmingDelete={confirmDeleteId === currentScheme.id}
+                deleting={deleting}
+                deleteError={deleteError}
+                onStartEdit={() => handleStartEdit(currentScheme)}
+                onRequestDelete={() => setConfirmDeleteId(currentScheme.id)}
+                onConfirmDelete={() =>
+                  void handleConfirmDelete(currentScheme.id)
+                }
+                onCancelDelete={() => {
+                  setConfirmDeleteId(null)
+                  setDeleteError(null)
+                }}
               />
             </div>
           ) : null}
-          <SavedSchemeSummary key={currentScheme.id} scheme={currentScheme} />
+          {editingSchemeId === currentScheme.id ? (
+            <EditSchemeSection
+              scheme={currentScheme}
+              name={editingName}
+              height={editingHeight}
+              editedFootprint={drawnFootprint}
+              saving={savingEdit}
+              error={editError}
+              onNameChange={setEditingName}
+              onHeightChange={setEditingHeight}
+              onSave={() => void handleSaveEdit()}
+              onCancel={handleCancelEdit}
+            />
+          ) : (
+            <SavedSchemeSummary
+              key={currentScheme.id}
+              scheme={currentScheme}
+            />
+          )}
           <div className="my-4 border-t border-[var(--color-fog)]" aria-hidden />
         </>
       ) : null}
-      <SchemeSection
-        projectId={projectId}
-        drawMode={drawMode}
-        onToggleDraw={onToggleDraw}
-        drawnFootprint={drawnFootprint}
-        hasSavedScheme={currentScheme !== null}
-        onSchemeSaved={() => setSchemesToken((n) => n + 1)}
-      />
+      {editingSchemeId === null ? (
+        <SchemeSection
+          projectId={projectId}
+          drawMode={drawMode}
+          onToggleDraw={onToggleDraw}
+          drawnFootprint={drawnFootprint}
+          hasSavedScheme={currentScheme !== null}
+          onSchemeSaved={() => {
+            postRefetchActionRef.current = 'newest'
+            setSchemesToken((n) => n + 1)
+          }}
+        />
+      ) : null}
     </>
   )
 }
@@ -768,6 +1218,7 @@ export function ProjectWorkspace({
   drawnFootprint,
   onClearFootprint,
   onCurrentSchemeFootprint,
+  onEditingFootprintChange,
 }: ProjectWorkspaceProps) {
   const [expanded, setExpanded] = useState(false)
 
@@ -812,6 +1263,7 @@ export function ProjectWorkspace({
               drawnFootprint={drawnFootprint}
               onClearFootprint={onClearFootprint}
               onCurrentSchemeFootprint={onCurrentSchemeFootprint}
+              onEditingFootprintChange={onEditingFootprintChange}
             />
           ) : (
             <EmptyState />

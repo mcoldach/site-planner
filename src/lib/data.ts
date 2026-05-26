@@ -284,6 +284,51 @@ export async function saveScheme(
 }
 
 /**
+ * Update an existing scheme's name, footprint, and height in place.
+ *
+ * Mirrors `saveScheme`'s server-side GeoJSON → PostGIS conversion (principle
+ * #2) but routes through `update_scheme` so editing a scheme rewrites the
+ * existing row instead of inserting a new one. Returns the same scheme id
+ * the caller passed in, so call-site code stays parallel to `saveScheme`.
+ */
+export async function updateScheme(
+  schemeId: string,
+  name: string,
+  footprint: GeoJSON.Polygon,
+  heightFt: number,
+): Promise<string> {
+  const { data, error } = await supabase.rpc('update_scheme', {
+    _scheme_id: schemeId,
+    _name: name,
+    _footprint_geojson: footprint,
+    _height_ft: heightFt,
+  });
+
+  if (error) {
+    throw new Error(`updateScheme failed: ${error.message}`);
+  }
+  if (typeof data !== 'string') {
+    throw new Error('updateScheme: RPC returned no scheme id');
+  }
+  return data;
+}
+
+/**
+ * Delete a saved scheme. The server-side RPC raises if no row matched, which
+ * surfaces as a thrown Error here — callers can show that to the user (it
+ * normally only happens if two clients raced on the same scheme).
+ */
+export async function deleteScheme(schemeId: string): Promise<void> {
+  const { error } = await supabase.rpc('delete_scheme', {
+    _scheme_id: schemeId,
+  });
+
+  if (error) {
+    throw new Error(`deleteScheme failed: ${error.message}`);
+  }
+}
+
+/**
  * Returns every Scheme belonging to a project, most-recent first.
  *
  * Reads from the `schemes_geojson` view, which joins schemes -> sites to

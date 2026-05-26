@@ -26,6 +26,13 @@ function App() {
   // draft). Null when no project is open or the project has no schemes yet.
   const [currentSchemeFootprint, setCurrentSchemeFootprint] =
     useState<GeoJSON.Polygon | null>(null)
+  // The polygon currently loaded into Terra Draw for in-place editing. When
+  // non-null, Map injects it into the draw instance and drops into select
+  // mode; the static saved-scheme layer is suppressed so the user doesn't
+  // see two copies. The workspace owns the edit lifecycle and pushes the
+  // initial geometry up (start), then null (save/cancel).
+  const [editingFootprint, setEditingFootprint] =
+    useState<GeoJSON.Polygon | null>(null)
 
   const loadParcels = useCallback(async () => {
     try {
@@ -59,6 +66,19 @@ function App() {
     [],
   )
 
+  // Workspace → App: start (footprint) or stop (null) editing the current
+  // saved scheme. Setting both pieces of state in lockstep keeps Map's
+  // editing-load effect and the workspace's "live edited geometry" view in
+  // sync: editingFootprint seeds Terra Draw once; drawnFootprint then
+  // tracks every drag/vertex update via the existing change pipeline.
+  const handleEditingFootprintChange = useCallback(
+    (footprint: GeoJSON.Polygon | null) => {
+      setEditingFootprint(footprint)
+      setDrawnFootprint(footprint)
+    },
+    [],
+  )
+
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <Header
@@ -81,7 +101,14 @@ function App() {
             refreshProjectsToken={projectsToken}
             drawMode={drawMode}
             onFootprintDrawn={handleFootprintDrawn}
-            savedSchemeFootprint={currentSchemeFootprint}
+            // Suppress the static saved-scheme polygon for the scheme that's
+            // currently being edited (its geometry lives in Terra Draw
+            // while editing). Otherwise the user would see two stacked
+            // polygons until they saved.
+            savedSchemeFootprint={
+              editingFootprint ? null : currentSchemeFootprint
+            }
+            editingFootprint={editingFootprint}
           />
         </div>
         {mode === 'parcels' ? (
@@ -98,6 +125,7 @@ function App() {
             drawnFootprint={drawnFootprint}
             onClearFootprint={handleClearFootprint}
             onCurrentSchemeFootprint={handleCurrentSchemeFootprint}
+            onEditingFootprintChange={handleEditingFootprintChange}
           />
         )}
       </main>
