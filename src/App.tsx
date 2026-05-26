@@ -6,6 +6,7 @@ import { ProjectWorkspace } from './components/ProjectWorkspace'
 import { Sidebar } from './components/Sidebar'
 import { fetchAllParcels } from './lib/data'
 import type { Parcel } from './lib/types'
+import type * as GeoJSON from 'geojson'
 
 function App() {
   const [mode, setMode] = useState<AppMode>('parcels')
@@ -16,6 +17,15 @@ function App() {
   const [allParcels, setAllParcels] = useState<Parcel[]>([])
   const [isProjectModalOpen, setProjectModalOpen] = useState(false)
   const [projectsToken, setProjectsToken] = useState(0)
+  const [drawMode, setDrawMode] = useState(false)
+  const [drawnFootprint, setDrawnFootprint] = useState<GeoJSON.Polygon | null>(
+    null,
+  )
+  // Most-recent saved scheme's footprint, lifted from the workspace so the
+  // Map can render it as a persistent layer (separate from the Terra Draw
+  // draft). Null when no project is open or the project has no schemes yet.
+  const [currentSchemeFootprint, setCurrentSchemeFootprint] =
+    useState<GeoJSON.Polygon | null>(null)
 
   const loadParcels = useCallback(async () => {
     try {
@@ -29,6 +39,25 @@ function App() {
   useEffect(() => {
     void loadParcels()
   }, [loadParcels])
+
+  const handleToggleDraw = useCallback((next: boolean) => {
+    setDrawMode(next)
+  }, [])
+
+  const handleClearFootprint = useCallback(() => {
+    setDrawnFootprint(null)
+  }, [])
+
+  const handleFootprintDrawn = useCallback((geom: GeoJSON.Polygon) => {
+    setDrawnFootprint(geom)
+  }, [])
+
+  const handleCurrentSchemeFootprint = useCallback(
+    (footprint: GeoJSON.Polygon | null) => {
+      setCurrentSchemeFootprint(footprint)
+    },
+    [],
+  )
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -50,6 +79,9 @@ function App() {
             onParcelClick={setSelectedParcelId}
             onProjectClick={setSelectedProjectId}
             refreshProjectsToken={projectsToken}
+            drawMode={drawMode}
+            onFootprintDrawn={handleFootprintDrawn}
+            savedSchemeFootprint={currentSchemeFootprint}
           />
         </div>
         {mode === 'parcels' ? (
@@ -61,6 +93,11 @@ function App() {
           <ProjectWorkspace
             projectId={selectedProjectId}
             onClose={() => setSelectedProjectId(null)}
+            drawMode={drawMode}
+            onToggleDraw={handleToggleDraw}
+            drawnFootprint={drawnFootprint}
+            onClearFootprint={handleClearFootprint}
+            onCurrentSchemeFootprint={handleCurrentSchemeFootprint}
           />
         )}
       </main>

@@ -84,3 +84,57 @@ export type Project = {
   geometry: GeoJSON.Geometry;
   centroid: GeoJSON.Point;
 };
+
+/**
+ * A saved Scheme as returned by the `schemes_geojson` view.
+ *
+ * `footprint` arrives from PostGIS via ST_AsGeoJSON as a GeoJSON.Polygon
+ * (the underlying column is geometry(Polygon, 4326)); `footprint_sf` is
+ * precomputed server-side from ST_Area on the geography cast, so the client
+ * doesn't recompute it (and stays consistent with PostGIS's area, not turf's).
+ */
+export type Scheme = {
+  id: string;
+  name: string;
+  height_ft: number;
+  footprint: GeoJSON.Polygon;
+  footprint_sf: number;
+};
+
+/**
+ * One row of the `check_scheme_compliance` RPC result. Shape mirrors the
+ * jsonb dispatcher in supabase/migrations/20260526181015_check_compliance_via_site.sql:
+ * common metadata (rule_key, check_kind, result, citation) is always present;
+ * the per-kind numeric fields are populated only for the kind that emitted
+ * the entry. Optional because the dispatcher is intentionally open — adding
+ * a new check-kind is filling a socket, and the UI must degrade gracefully.
+ */
+export type ComplianceEntry = {
+  rule_key: string;
+  check_kind: string;
+  result: 'pass' | 'fail' | 'not_evaluated';
+  citation?: { section_ref: string | null; section_url: string | null };
+  // spatial_inset (setback.*.min)
+  value_used_ft?: number;
+  driving_role?: string;
+  role_values?: Record<string, number | null>;
+  method?: string;
+  note?: string;
+  // not_evaluated
+  reason?: string;
+  // area_ratio (lot.coverage.max)
+  actual_pct?: number;
+  limit_pct?: number;
+  margin_pct?: number;
+  // scalar_max (height.max[.principal])
+  actual_ft?: number;
+  limit_ft?: number;
+  margin_ft?: number;
+};
+
+export type ComplianceResult = {
+  scheme_id: string;
+  parcel_id: string;
+  constraint_codes: string[];
+  results: ComplianceEntry[];
+};

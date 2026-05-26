@@ -12,8 +12,15 @@
  * See supabase/migrations/20260419_0500_views.sql.
  */
 
+import type * as GeoJSON from 'geojson';
 import { supabase } from './supabase';
-import type { Parcel, ParcelContext, Project } from './types';
+import type {
+  ComplianceResult,
+  Parcel,
+  ParcelContext,
+  Project,
+  Scheme,
+} from './types';
 
 const PARCELS_GEOJSON_COLUMNS =
   'id, source_apn, source_system, label, zone_district_code, geometry, raw_attrs, retrieved_at, source_url';
@@ -244,4 +251,101 @@ export async function fetchProjectContext(
     project: { id: project.id, name: project.name },
     context,
   };
+}
+
+/**
+ * Persist a drawn footprint as a Scheme under the project's site.
+ *
+ * The footprint geometry is shipped as raw GeoJSON; conversion to PostGIS
+ * geometry happens server-side in `save_scheme` so the canonical spatial
+ * store stays in Postgres (principle #2). Returns the new scheme id so the
+ * caller can immediately pipe it into `checkSchemeCompliance`.
+ */
+export async function saveScheme(
+  projectId: string,
+  name: string,
+  footprint: GeoJSON.Polygon,
+  heightFt: number,
+): Promise<string> {
+  const { data, error } = await supabase.rpc('save_scheme', {
+    _project_id: projectId,
+    _name: name,
+    _footprint_geojson: footprint,
+    _height_ft: heightFt,
+  });
+
+  if (error) {
+    throw new Error(`saveScheme failed: ${error.message}`);
+  }
+  if (typeof data !== 'string') {
+    throw new Error('saveScheme: RPC returned no scheme id');
+  }
+  return data;
+}
+
+/**
+ * Returns every Scheme belonging to a project, most-recent first.
+ *
+ * Reads from the `schemes_geojson` view, which joins schemes -> sites to
+ * surface `project_id` and ships the footprint as GeoJSON (PostGIS geometry
+ * is not directly serializable over PostgREST). The view also precomputes
+ * `footprint_sf` from ST_Area on a geography cast, so the client uses the
+ * server's canonical area rather than recomputing with turf.
+ */
+export async function fetchProjectSchemes(
+  projectId: string,
+): Promise<Scheme[]> {
+  const { data, error } = await supabase
+    .from('schemes_geojson')
+    .select('id, name, height_ft, footprint, footprint_sf, created_at')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(`fetchProjectSchemes failed: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => {
+    const r = row as {
+      id: string;
+      name: string | null;
+      height_ft: number | string;
+      footprint: GeoJSON.Polygon;
+      footprint_sf: number | string;
+    };
+    return {
+      id: r.id,
+      name: r.name ?? '',
+      // Postgres numeric flows through PostgREST as a string by default;
+      // coerce here so callers see a plain number regardless of column type.
+      height_ft: Number(r.height_ft),
+      footprint: r.footprint,
+      footprint_sf: Number(r.footprint_sf),
+    };
+  });
+}
+
+/**
+ * Run the cited compliance engine against a saved scheme.
+ *
+ * Every check-kind (setback / coverage / height / not_evaluated) is dispatched
+ * server-side; we hand the jsonb document back to the UI verbatim. The shape
+ * is owned by check_scheme_compliance — see ComplianceResult in ./types.
+ */
+export async function checkSchemeCompliance(
+  schemeId: string,
+): Promise<ComplianceResult> {
+  const { data, error } = await supabase.rpc('check_scheme_compliance', {
+    _scheme_id: schemeId,
+  });
+
+  if (error) {
+    throw new Error(`checkSchemeCompliance failed: ${error.message}`);
+  }
+  if (data == null) {
+    throw new Error(
+      `checkSchemeCompliance: no result for scheme "${schemeId}"`,
+    );
+  }
+  return data as ComplianceResult;
 }
