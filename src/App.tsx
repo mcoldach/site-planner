@@ -4,8 +4,10 @@ import { Map } from './components/Map'
 import { ProjectModal } from './components/ProjectModal'
 import { ProjectWorkspace } from './components/ProjectWorkspace'
 import { Sidebar } from './components/Sidebar'
+import { SourcesWorkspace } from './components/SourcesWorkspace'
+import { SourceUploadModal } from './components/SourceUploadModal'
 import { fetchAllParcels } from './lib/data'
-import type { Parcel } from './lib/types'
+import type { JurisdictionRef, Parcel } from './lib/types'
 import type * as GeoJSON from 'geojson'
 
 function App() {
@@ -17,6 +19,14 @@ function App() {
   const [allParcels, setAllParcels] = useState<Parcel[]>([])
   const [isProjectModalOpen, setProjectModalOpen] = useState(false)
   const [projectsToken, setProjectsToken] = useState(0)
+  // Sources mode state. Mirrors the Projects pattern: a modal toggle, a
+  // refresh token bumped by the modal on success so the list refetches, and
+  // a lifted "current jurisdiction" so the modal knows where the upload
+  // lands without needing a callback ref into the workspace.
+  const [isSourceUploadOpen, setSourceUploadOpen] = useState(false)
+  const [sourcesToken, setSourcesToken] = useState(0)
+  const [activeJurisdiction, setActiveJurisdiction] =
+    useState<JurisdictionRef | null>(null)
   const [drawMode, setDrawMode] = useState(false)
   const [drawnFootprint, setDrawnFootprint] = useState<GeoJSON.Polygon | null>(
     null,
@@ -89,44 +99,57 @@ function App() {
         onSelectParcel={setSelectedParcelId}
         onLookupComplete={loadParcels}
         onNewProject={() => setProjectModalOpen(true)}
+        onUploadSource={() => setSourceUploadOpen(true)}
       />
 
       <main className="flex min-h-0 flex-1">
-        <div className="relative min-h-0 min-w-0 flex-1">
-          <Map
-            mode={mode}
-            selectedParcelId={selectedParcelId}
-            onParcelClick={setSelectedParcelId}
-            onProjectClick={setSelectedProjectId}
-            refreshProjectsToken={projectsToken}
-            drawMode={drawMode}
-            onFootprintDrawn={handleFootprintDrawn}
-            // Suppress the static saved-scheme polygon for the scheme that's
-            // currently being edited (its geometry lives in Terra Draw
-            // while editing). Otherwise the user would see two stacked
-            // polygons until they saved.
-            savedSchemeFootprint={
-              editingFootprint ? null : currentSchemeFootprint
-            }
-            editingFootprint={editingFootprint}
-          />
-        </div>
-        {mode === 'parcels' ? (
-          <Sidebar
-            selectedParcelId={selectedParcelId}
-            allParcels={allParcels}
+        {mode === 'sources' ? (
+          // Sources mode has no map — the truth-engine module is a
+          // document/citation surface, not a spatial one. Render the
+          // workspace full-width so the editorial list breathes.
+          <SourcesWorkspace
+            refreshToken={sourcesToken}
+            onJurisdictionChange={setActiveJurisdiction}
           />
         ) : (
-          <ProjectWorkspace
-            projectId={selectedProjectId}
-            onClose={() => setSelectedProjectId(null)}
-            drawMode={drawMode}
-            onToggleDraw={handleToggleDraw}
-            drawnFootprint={drawnFootprint}
-            onClearFootprint={handleClearFootprint}
-            onCurrentSchemeFootprint={handleCurrentSchemeFootprint}
-            onEditingFootprintChange={handleEditingFootprintChange}
-          />
+          <>
+            <div className="relative min-h-0 min-w-0 flex-1">
+              <Map
+                mode={mode}
+                selectedParcelId={selectedParcelId}
+                onParcelClick={setSelectedParcelId}
+                onProjectClick={setSelectedProjectId}
+                refreshProjectsToken={projectsToken}
+                drawMode={drawMode}
+                onFootprintDrawn={handleFootprintDrawn}
+                // Suppress the static saved-scheme polygon for the scheme
+                // that's currently being edited (its geometry lives in
+                // Terra Draw while editing). Otherwise the user would see
+                // two stacked polygons until they saved.
+                savedSchemeFootprint={
+                  editingFootprint ? null : currentSchemeFootprint
+                }
+                editingFootprint={editingFootprint}
+              />
+            </div>
+            {mode === 'parcels' ? (
+              <Sidebar
+                selectedParcelId={selectedParcelId}
+                allParcels={allParcels}
+              />
+            ) : (
+              <ProjectWorkspace
+                projectId={selectedProjectId}
+                onClose={() => setSelectedProjectId(null)}
+                drawMode={drawMode}
+                onToggleDraw={handleToggleDraw}
+                drawnFootprint={drawnFootprint}
+                onClearFootprint={handleClearFootprint}
+                onCurrentSchemeFootprint={handleCurrentSchemeFootprint}
+                onEditingFootprintChange={handleEditingFootprintChange}
+              />
+            )}
+          </>
         )}
       </main>
 
@@ -138,6 +161,15 @@ function App() {
         }}
         parcels={allParcels}
         onLookupComplete={loadParcels}
+      />
+
+      <SourceUploadModal
+        isOpen={isSourceUploadOpen}
+        onClose={() => setSourceUploadOpen(false)}
+        jurisdiction={activeJurisdiction}
+        onUploaded={() => {
+          setSourcesToken((n) => n + 1)
+        }}
       />
     </div>
   )

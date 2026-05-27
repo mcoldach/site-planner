@@ -138,3 +138,44 @@ export type ComplianceResult = {
   constraint_codes: string[];
   results: ComplianceEntry[];
 };
+
+/**
+ * Cite-able reference material uploaded by an authenticated user.
+ *
+ * Mirrors the `documents` table in
+ * supabase/migrations/20260527173548_document_ingestion_schema.sql. Phase 1
+ * surface uploads stay at `ingest_status = 'uploaded'` indefinitely — the
+ * ingest pipeline (Step 3) is what flips them onward.
+ */
+export type IngestStatus = 'uploaded' | 'processing' | 'ingested' | 'failed';
+
+export type Document = {
+  id: string;
+  jurisdiction_id: string;
+  source_snapshot_id: string | null;
+  owner_id: string | null;
+  filename: string;
+  storage_path: string;
+  title: string | null;
+  code_type: string | null;
+  version: string | null;
+  effective_date: string | null;
+  source_url: string | null;
+  ingest_status: IngestStatus;
+  ingest_error: string | null;
+  ingested_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * Slim jurisdiction shape used by the Sources mode selector — id + slug +
+ * display name only. Returned by `fetchJurisdictions`. The full `Jurisdiction`
+ * shape is reserved for the parcel-context pipeline, which carries
+ * authority_type/code_label/etc. for the citation panel.
+ */
+export type JurisdictionRef = {
+  id: string;
+  slug: string;
+  name: string;
+};

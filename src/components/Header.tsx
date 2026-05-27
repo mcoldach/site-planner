@@ -2,7 +2,7 @@ import { ParcelSearch } from './ParcelSearch'
 import type { Parcel } from '../lib/types'
 import { useAuth } from '../lib/auth'
 
-export type AppMode = 'projects' | 'parcels'
+export type AppMode = 'projects' | 'parcels' | 'sources'
 
 type HeaderProps = {
   mode: AppMode
@@ -12,6 +12,7 @@ type HeaderProps = {
   onSelectParcel: (id: string | null) => void
   onLookupComplete: () => void | Promise<void>
   onNewProject: () => void
+  onUploadSource: () => void
 }
 
 type ModeNavProps = {
@@ -23,6 +24,7 @@ function ModeNav({ mode, onModeChange }: ModeNavProps) {
   const items: { id: AppMode; label: string }[] = [
     { id: 'projects', label: 'Projects' },
     { id: 'parcels', label: 'Parcels' },
+    { id: 'sources', label: 'Sources' },
   ]
 
   return (
@@ -52,7 +54,12 @@ function ModeNav({ mode, onModeChange }: ModeNavProps) {
   )
 }
 
-function NewProjectControl({ onClick }: { onClick: () => void }) {
+type PlusControlProps = {
+  onClick: () => void
+  label: string
+}
+
+function PlusControl({ onClick, label }: PlusControlProps) {
   return (
     <button
       type="button"
@@ -62,7 +69,7 @@ function NewProjectControl({ onClick }: { onClick: () => void }) {
       <span aria-hidden className="mr-1">
         +
       </span>
-      Project
+      {label}
     </button>
   )
 }
@@ -75,6 +82,7 @@ export function Header({
   onSelectParcel,
   onLookupComplete,
   onNewProject,
+  onUploadSource,
 }: HeaderProps) {
   const { signOut } = useAuth()
 
@@ -98,8 +106,10 @@ export function Header({
               onLookupComplete={onLookupComplete}
             />
           </div>
+        ) : mode === 'sources' ? (
+          <PlusControl onClick={onUploadSource} label="Upload" />
         ) : (
-          <NewProjectControl onClick={onNewProject} />
+          <PlusControl onClick={onNewProject} label="Project" />
         )}
 
         <button

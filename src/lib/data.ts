@@ -16,6 +16,8 @@ import type * as GeoJSON from 'geojson';
 import { supabase } from './supabase';
 import type {
   ComplianceResult,
+  Document,
+  JurisdictionRef,
   Parcel,
   ParcelContext,
   Project,
@@ -393,4 +395,164 @@ export async function checkSchemeCompliance(
     );
   }
   return data as ComplianceResult;
+}
+
+/**
+ * Lists jurisdictions for the Sources mode selector — id, slug, name only,
+ * ordered by display name. The full `Jurisdiction` shape (authority_type,
+ * code_label, code_home_url, current_code_version) is reserved for the
+ * parcel-context pipeline and citation panel; the selector doesn't need it.
+ */
+export async function fetchJurisdictions(): Promise<JurisdictionRef[]> {
+  const { data, error } = await supabase
+    .from('jurisdictions')
+    .select('id, slug, name')
+    .order('name', { ascending: true });
+
+  if (error) {
+    throw new Error(`fetchJurisdictions failed: ${error.message}`);
+  }
+
+  return (data ?? []) as JurisdictionRef[];
+}
+
+/**
+ * Lists every uploaded document for a jurisdiction, newest first.
+ *
+ * Scoped to a single jurisdiction (one filter, one sort) because the Sources
+ * mode UI always views one jurisdiction at a time — there's no value in a
+ * cross-jurisdiction list, and it would muddy the citation panel's "city vs
+ * county" mental model. RLS gates the read to authenticated users.
+ */
+export async function fetchDocumentsForJurisdiction(
+  jurisdictionId: string,
+): Promise<Document[]> {
+  const { data, error } = await supabase
+    .from('documents')
+    .select(
+      [
+        'id',
+        'jurisdiction_id',
+        'source_snapshot_id',
+        'owner_id',
+        'filename',
+        'storage_path',
+        'title',
+        'code_type',
+        'version',
+        'effective_date',
+        'source_url',
+        'ingest_status',
+        'ingest_error',
+        'ingested_at',
+        'created_at',
+        'updated_at',
+      ].join(', '),
+    )
+    .eq('jurisdiction_id', jurisdictionId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(`fetchDocumentsForJurisdiction failed: ${error.message}`);
+  }
+
+  return (data ?? []) as unknown as Document[];
+}
+
+export type UploadDocumentMetadata = {
+  /** Jurisdiction slug used to namespace the Storage object key. */
+  jurisdictionSlug: string;
+  /** Display title, e.g. "El Paso County Land Development Code". */
+  title: string;
+  /** Code amendment / version label — optional, free text. */
+  version?: string;
+  /** ISO date string (YYYY-MM-DD) for when this version took effect. */
+  effectiveDate?: string;
+  /** Official source URL (Municode, AmLegal, etc.). */
+  sourceUrl?: string;
+  /** Free-text code type ("ordinance", "code", "master_plan", …). */
+  codeType?: string;
+};
+
+/**
+ * Two-step upload: PDF blob into Supabase Storage, then a `documents` row
+ * pointing at it. The document_id is minted client-side so both steps share
+ * the same key — the storage object lives at
+ * `{jurisdiction_slug}/{document_id}.pdf` so it's discoverable from the row
+ * alone (no separate object<>row mapping table).
+ *
+ * `ingest_status` is left at the schema default ('uploaded'); a separate
+ * ingest pipeline (Phase 2, Step 3 in the build plan) advances it to
+ * 'processing' / 'ingested' / 'failed'. owner_id auto-stamps via the column
+ * default `auth.uid()`, matching projects/schemes.
+ *
+ * On any failure, we throw with the underlying message; the caller is
+ * responsible for not closing the modal so the user can retry. We do NOT
+ * roll the Storage object back on a row-insert failure — the next retry
+ * uses a new document_id, so an orphaned object is at worst dead weight in
+ * the bucket. (Tradeoff: simpler code, occasional orphans.)
+ */
+export async function uploadDocument(
+  jurisdictionId: string,
+  file: File,
+  metadata: UploadDocumentMetadata,
+): Promise<Document> {
+  const documentId = crypto.randomUUID();
+  const storagePath = `${metadata.jurisdictionSlug}/${documentId}.pdf`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('documents')
+    .upload(storagePath, file, {
+      contentType: 'application/pdf',
+      upsert: false,
+    });
+
+  if (uploadError) {
+    throw new Error(`uploadDocument storage upload failed: ${uploadError.message}`);
+  }
+
+  const { data, error } = await supabase
+    .from('documents')
+    .insert({
+      id: documentId,
+      jurisdiction_id: jurisdictionId,
+      source_snapshot_id: null,
+      filename: file.name,
+      storage_path: storagePath,
+      title: metadata.title,
+      version: metadata.version ?? null,
+      effective_date: metadata.effectiveDate ?? null,
+      source_url: metadata.sourceUrl ?? null,
+      code_type: metadata.codeType ?? null,
+      ingest_status: 'uploaded',
+    })
+    .select(
+      [
+        'id',
+        'jurisdiction_id',
+        'source_snapshot_id',
+        'owner_id',
+        'filename',
+        'storage_path',
+        'title',
+        'code_type',
+        'version',
+        'effective_date',
+        'source_url',
+        'ingest_status',
+        'ingest_error',
+        'ingested_at',
+        'created_at',
+        'updated_at',
+      ].join(', '),
+    )
+    .single();
+
+  if (error) {
+    throw new Error(`uploadDocument insert failed: ${error.message}`);
+  }
+  if (data == null) {
+    throw new Error('uploadDocument: insert returned no row');
+  }
+  return data as unknown as Document;
 }
