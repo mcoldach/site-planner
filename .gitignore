@@ -23,3 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 .env.local
+
+# Environment files — never committed (2026-05-27, post-leak remediation)
+.env
+.env.*
+!.env.example
+!.env.*.example
