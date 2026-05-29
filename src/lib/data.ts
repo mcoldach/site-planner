@@ -17,11 +17,13 @@ import { supabase } from './supabase';
 import type {
   ComplianceResult,
   Document,
+  FootprintInput,
   JurisdictionRef,
   Parcel,
   ParcelContext,
   Project,
   Scheme,
+  SchemeFootprint,
 } from './types';
 
 const PARCELS_GEOJSON_COLUMNS =
@@ -256,24 +258,22 @@ export async function fetchProjectContext(
 }
 
 /**
- * Persist a drawn footprint as a Scheme under the project's site.
+ * Persist drawn footprints as a Scheme under the project's site.
  *
- * The footprint geometry is shipped as raw GeoJSON; conversion to PostGIS
- * geometry happens server-side in `save_scheme` so the canonical spatial
- * store stays in Postgres (principle #2). Returns the new scheme id so the
- * caller can immediately pipe it into `checkSchemeCompliance`.
+ * Footprints are shipped as a jsonb array; conversion to PostGIS geometry
+ * happens server-side in `save_scheme` so the canonical spatial store stays
+ * in Postgres (principle #2). Returns the new scheme id so the caller can
+ * immediately pipe it into `checkSchemeCompliance`.
  */
 export async function saveScheme(
   projectId: string,
   name: string,
-  footprint: GeoJSON.Polygon,
-  heightFt: number,
+  footprints: FootprintInput[],
 ): Promise<string> {
   const { data, error } = await supabase.rpc('save_scheme', {
     _project_id: projectId,
     _name: name,
-    _footprint_geojson: footprint,
-    _height_ft: heightFt,
+    _footprints: footprints,
   });
 
   if (error) {
@@ -286,7 +286,7 @@ export async function saveScheme(
 }
 
 /**
- * Update an existing scheme's name, footprint, and height in place.
+ * Update an existing scheme's name and footprints in place.
  *
  * Mirrors `saveScheme`'s server-side GeoJSON → PostGIS conversion (principle
  * #2) but routes through `update_scheme` so editing a scheme rewrites the
@@ -296,14 +296,12 @@ export async function saveScheme(
 export async function updateScheme(
   schemeId: string,
   name: string,
-  footprint: GeoJSON.Polygon,
-  heightFt: number,
+  footprints: FootprintInput[],
 ): Promise<string> {
   const { data, error } = await supabase.rpc('update_scheme', {
     _scheme_id: schemeId,
     _name: name,
-    _footprint_geojson: footprint,
-    _height_ft: heightFt,
+    _footprints: footprints,
   });
 
   if (error) {
@@ -333,18 +331,19 @@ export async function deleteScheme(schemeId: string): Promise<void> {
 /**
  * Returns every Scheme belonging to a project, most-recent first.
  *
- * Reads from the `schemes_geojson` view, which joins schemes -> sites to
- * surface `project_id` and ships the footprint as GeoJSON (PostGIS geometry
- * is not directly serializable over PostgREST). The view also precomputes
- * `footprint_sf` from ST_Area on a geography cast, so the client uses the
- * server's canonical area rather than recomputing with turf.
+ * Reads from the `schemes_geojson` view, which now returns scheme-level
+ * summary rows (no footprint geometry): the view joins schemes -> sites to
+ * surface `project_id` and precomputes `footprint_count` and `footprint_sf`
+ * (the unioned area of all the scheme's footprints) so the client uses the
+ * server's canonical area rather than recomputing with turf. Per-footprint
+ * geometry lives in `scheme_footprints_geojson` (see `fetchSchemeFootprints`).
  */
 export async function fetchProjectSchemes(
   projectId: string,
 ): Promise<Scheme[]> {
   const { data, error } = await supabase
     .from('schemes_geojson')
-    .select('id, name, height_ft, footprint, footprint_sf, created_at')
+    .select('id, name, footprint_count, footprint_sf, created_at')
     .eq('project_id', projectId)
     .order('created_at', { ascending: false });
 
@@ -356,16 +355,63 @@ export async function fetchProjectSchemes(
     const r = row as {
       id: string;
       name: string | null;
-      height_ft: number | string;
-      footprint: GeoJSON.Polygon;
+      footprint_count: number | string;
       footprint_sf: number | string;
+      created_at: string;
     };
     return {
       id: r.id,
       name: r.name ?? '',
       // Postgres numeric flows through PostgREST as a string by default;
       // coerce here so callers see a plain number regardless of column type.
-      height_ft: Number(r.height_ft),
+      footprint_count: Number(r.footprint_count),
+      footprint_sf: Number(r.footprint_sf),
+      created_at: r.created_at,
+    };
+  });
+}
+
+/**
+ * Returns every footprint belonging to a scheme, ordered by `ordinal`.
+ *
+ * Reads from the `scheme_footprints_geojson` view, which ships each
+ * footprint's polygon as GeoJSON and precomputes `footprint_sf` from
+ * ST_Area on the geography cast. Used by the load-for-edit path so Terra
+ * Draw can rehydrate the scheme's footprints in their original order.
+ */
+export async function fetchSchemeFootprints(
+  schemeId: string,
+): Promise<SchemeFootprint[]> {
+  const { data, error } = await supabase
+    .from('scheme_footprints_geojson')
+    .select('id, scheme_id, ordinal, label, use_code, height_ft, footprint, footprint_sf')
+    .eq('scheme_id', schemeId)
+    .order('ordinal', { ascending: true });
+
+  if (error) {
+    throw new Error(`fetchSchemeFootprints failed: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => {
+    const r = row as {
+      id: string;
+      scheme_id: string;
+      ordinal: number | string;
+      label: string | null;
+      use_code: string | null;
+      height_ft: number | string | null;
+      footprint: GeoJSON.Polygon;
+      footprint_sf: number | string;
+    };
+    return {
+      id: r.id,
+      scheme_id: r.scheme_id,
+      ordinal: Number(r.ordinal),
+      label: r.label,
+      use_code: r.use_code,
+      // height_ft is nullable in the schema; preserve null but coerce numeric
+      // strings (PostgREST sends Postgres numeric as text by default).
+      height_ft: r.height_ft === null ? null : Number(r.height_ft),
       footprint: r.footprint,
       footprint_sf: Number(r.footprint_sf),
     };

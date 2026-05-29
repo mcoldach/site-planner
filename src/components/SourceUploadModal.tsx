@@ -52,18 +52,11 @@ export function SourceUploadModal({
   const [error, setError] = useState<string | null>(null)
   const titleInputRef = useRef<HTMLInputElement>(null)
 
-  // Reset on open. Mirrors ProjectModal: the modal is a transient surface,
-  // not a long-lived form — clearing on open keeps re-opens predictable.
+  // Focus the title input on open. The modal is conditionally mounted via
+  // `if (!isOpen) return null`, so a fresh mount already gives fresh
+  // useState defaults — no explicit reset needed.
   useEffect(() => {
     if (!isOpen) return
-    setFile(null)
-    setTitle('')
-    setVersion('')
-    setEffectiveDate('')
-    setSourceUrl('')
-    setCodeType('')
-    setSubmitting(false)
-    setError(null)
     const id = window.requestAnimationFrame(() => {
       titleInputRef.current?.focus()
     })

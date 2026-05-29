@@ -273,6 +273,11 @@ export function SourcesWorkspace({
   // bumps refreshToken (i.e. after a successful upload).
   useEffect(() => {
     if (!selectedJurisdictionId) {
+      // Blank the list when no jurisdiction is selected so stale rows from
+      // the prior jurisdiction don't bleed through. Same data-fetch family
+      // as Sidebar — the rule's exception doesn't cover the synchronous
+      // reset that precedes the fetch.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDocuments([])
       return
     }

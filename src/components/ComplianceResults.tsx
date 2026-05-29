@@ -99,7 +99,7 @@ function entrySummary(entry: ComplianceEntry): string | null {
 
 type ResultRowProps = { entry: ComplianceEntry }
 
-function ResultRow({ entry }: ResultRowProps) {
+export function ResultRow({ entry }: ResultRowProps) {
   const summary = entrySummary(entry)
   const sectionRef = entry.citation?.section_ref ?? null
   const sectionUrl = entry.citation?.section_url ?? null
@@ -175,8 +175,23 @@ type ComplianceResultsProps = {
   result: ComplianceResult
 }
 
+// react-refresh allows ONE non-component export per file; this is it.
+// Exported (rather than duplicated in the consumer) so the pass/fail
+// precedence used in the per-building roll-up stays defined alongside the
+// status glyph it labels.
+// eslint-disable-next-line react-refresh/only-export-components
+export function aggregateStatus(entries: ComplianceEntry[]): ComplianceEntry['result'] {
+  // Fail wins over pass; not_evaluated does NOT downgrade pass —
+  // an N/E rule that can't be checked shouldn't make a clean
+  // building read as ambiguous.
+  if (entries.some((e) => e.result === 'fail')) return 'fail'
+  if (entries.some((e) => e.result === 'pass')) return 'pass'
+  return 'not_evaluated'
+}
+
 export function ComplianceResults({ result }: ComplianceResultsProps) {
   const { results } = result
+  const schemeEntries = results.filter((e) => e.footprint_id === undefined)
 
   return (
     <section>
@@ -184,13 +199,13 @@ export function ComplianceResults({ result }: ComplianceResultsProps) {
         COMPLIANCE
       </p>
 
-      {results.length === 0 ? (
+      {schemeEntries.length === 0 ? (
         <p className="font-sans text-xs italic text-[var(--color-mist)]">
-          No constraints evaluated for this constraint set.
+          No scheme-level constraints evaluated for this constraint set.
         </p>
       ) : (
         <div className="divide-y divide-[var(--color-fog)]">
-          {results.map((entry, idx) => (
+          {schemeEntries.map((entry, idx) => (
             <ResultRow
               key={`${entry.rule_key}-${entry.check_kind}-${idx}`}
               entry={entry}

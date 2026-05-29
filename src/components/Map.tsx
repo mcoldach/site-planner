@@ -10,7 +10,12 @@ import {
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
 import { fetchAllParcels, fetchProjects } from '../lib/data';
 import { getCssToken } from '../lib/css-tokens';
-import type { Parcel, Project } from '../lib/types';
+import type {
+  DrawnFootprint,
+  Parcel,
+  Project,
+  SchemeFootprint,
+} from '../lib/types';
 
 // Terra Draw uses string | number ids internally; we model the same shape
 // locally instead of importing the type to avoid coupling to its public API.
@@ -92,6 +97,7 @@ const PROJECT_LAYER_IDS = [
 const SAVED_SCHEME_LAYER_IDS = [
   'saved-scheme-fill',
   'saved-scheme-outline',
+  'saved-scheme-selected',
 ] as const;
 
 // Terra Draw's MapLibre adapter namespaces every layer/source it adds with
@@ -144,20 +150,33 @@ const EMPTY_FC: FeatureCollection = {
   features: [],
 };
 
-function savedSchemeToFeatureCollection(
-  footprint: GeoJSON.Polygon | null,
+function savedSchemesToFeatureCollection(
+  footprints: SchemeFootprint[] | null,
 ): FeatureCollection {
-  if (!footprint) return EMPTY_FC;
+  if (!footprints || footprints.length === 0) return EMPTY_FC;
   return {
     type: 'FeatureCollection',
-    features: [
-      {
-        type: 'Feature',
-        properties: {},
-        geometry: footprint,
-      },
-    ],
+    features: footprints.map((f) => ({
+      type: 'Feature',
+      properties: { id: f.id },
+      geometry: f.footprint,
+    })),
   };
+}
+
+// Snapshot every polygon currently in Terra Draw and stamp it with its
+// stable feature id. Called from both the finish handler (just-drawn) and
+// the change handler (vertex edits, drags, deletes) so the parent always
+// sees the COMPLETE current set — never a single feature taken in
+// isolation.
+function collectDrawnFootprints(draw: TerraDraw): DrawnFootprint[] {
+  return draw
+    .getSnapshot()
+    .filter((f) => f.geometry.type === 'Polygon' && f.id !== undefined)
+    .map((f) => ({
+      id: f.id as FeatureId,
+      geometry: f.geometry as GeoJSON.Polygon,
+    }));
 }
 
 type MapProps = {
@@ -167,13 +186,59 @@ type MapProps = {
   onProjectClick: (projectId: string) => void;
   refreshProjectsToken: number;
   drawMode: boolean;
-  onFootprintDrawn: (geojson: GeoJSON.Polygon) => void;
-  savedSchemeFootprint: GeoJSON.Polygon | null;
-  // When non-null, this polygon is loaded into Terra Draw's store and
-  // selected so the user can drag/rotate/edit it. The parent is responsible
-  // for hiding the matching saved-scheme static layer to avoid doubling.
-  // Cleared (null) to remove the editing feature from Terra Draw.
-  editingFootprint: GeoJSON.Polygon | null;
+  // Imperative arm signal: a monotonic counter the parent bumps to ask
+  // Terra Draw to (re-)enter polygon mode. Required because the finish
+  // handler drops the instance into 'select' after each pad and the
+  // mode/drawMode effect only fires on state changes — so toggling
+  // drawMode false→true is the only way to re-arm via state, which the
+  // "Draw another" UX explicitly avoids.
+  drawArmToken: number;
+  // Emitted on every change to the Terra Draw store (finish, vertex edit,
+  // feature delete). Always carries the COMPLETE current set of drawn
+  // polygons — the parent is expected to replace, not merge.
+  onFootprintsChanged: (footprints: DrawnFootprint[]) => void;
+  savedSchemeFootprints: SchemeFootprint[] | null;
+  // SEED polygons for an edit session. When non-null, Map injects every
+  // polygon into Terra Draw, drops into select mode, and (if there's a
+  // single polygon) auto-selects it so the drag/rotate/vertex handles
+  // appear without a click. The app sets this once at edit start and
+  // again to null at edit end; it never pushes back into Terra Draw
+  // mid-session. The parent must hide the matching saved-scheme static
+  // layer during editing to avoid doubling.
+  editingSeed: GeoJSON.Polygon[] | null;
+  // Imperative "select this footprint on the map" signal. The parent
+  // bumps `selectFootprintToken` to ask Map to switch Terra Draw into
+  // select mode and pick the feature whose id is `selectFootprintId` (the
+  // id captured at the moment of the token bump). Token-based rather than
+  // state-based so re-selecting the same id fires the effect again.
+  selectFootprintToken: number;
+  selectFootprintId: string | number | null;
+  // The CURRENTLY-selected footprint id, written by Map's own
+  // select/deselect listeners via onSelectedFootprintIdChanged and
+  // round-tripped back through App. Distinct from selectFootprintId,
+  // which is the COMMAND ("act on this id at the next token bump").
+  // This prop is what the saved-scheme-selected MapLibre filter
+  // reads from.
+  selectedFootprintId: string | number | null;
+  // Saved-scheme multi-select. The 'saved-scheme-selected' layer's
+  // MapLibre filter reads this. Separate from selectedFootprintId
+  // (which is single-id, edit-mode Terra Draw selection).
+  selectedSavedFootprintIds: Set<string | number>;
+  // Saved-scheme map click toggles an id in App's set. Separate from
+  // onSelectedFootprintIdChanged (edit-mode single-id callback).
+  onToggleSavedFootprintId: (id: string | number) => void;
+  onClearSavedFootprints: () => void;
+  // Imperative "remove this footprint" signal. Same token pattern: the
+  // parent bumps `removeFootprintToken` to ask Map to deselect (if needed)
+  // and removeFeatures the polygon whose id is `removeFootprintId`. Map
+  // then re-emits the resulting drawn set via onFootprintsChanged so the
+  // workspace's metaById reconciliation drops the deleted row.
+  removeFootprintToken: number;
+  removeFootprintId: string | number | null;
+  // Map → App: Terra Draw's select/deselect events as the source of
+  // truth for "which polygon is currently selected". Reports null on
+  // deselect; reports the Terra Draw feature id on select.
+  onSelectedFootprintIdChanged: (id: string | number | null) => void;
 };
 
 export function Map({
@@ -183,9 +248,27 @@ export function Map({
   onProjectClick,
   refreshProjectsToken,
   drawMode,
-  onFootprintDrawn,
-  savedSchemeFootprint,
-  editingFootprint,
+  drawArmToken,
+  onFootprintsChanged,
+  savedSchemeFootprints,
+  editingSeed,
+  selectFootprintToken,
+  selectFootprintId,
+  // The single-id selectedFootprintId prop is preserved on the contract
+  // (App still passes it; the type still documents it) so the edit-mode
+  // wiring in App and ProjectWorkspace stays unchanged. Inside Map it's
+  // currently unused: saved-scheme highlighting now reads from
+  // selectedSavedFootprintIds, and Terra Draw's own select/deselect
+  // events drive edit-mode highlighting via onSelectedFootprintIdChanged.
+  // Underscore-prefixed per the eslint convention for intentionally-
+  // unused destructured names.
+  selectedFootprintId: _selectedFootprintId,
+  selectedSavedFootprintIds,
+  onToggleSavedFootprintId,
+  onClearSavedFootprints,
+  removeFootprintToken,
+  removeFootprintId,
+  onSelectedFootprintIdChanged,
 }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -208,28 +291,70 @@ export function Map({
   const drawRef = useRef<TerraDraw | null>(null);
   const drawModeRef = useRef(drawMode);
   drawModeRef.current = drawMode;
-  const onFootprintDrawnRef = useRef(onFootprintDrawn);
-  onFootprintDrawnRef.current = onFootprintDrawn;
-  // The feature id Terra Draw assigned to the polygon currently being
-  // edited. Tracked separately so we can scope removeFeatures() to just the
-  // editing feature on edit-end and not nuke unrelated draft features.
-  const editingFeatureIdRef = useRef<FeatureId | null>(null);
+  const drawArmTokenRef = useRef(drawArmToken);
+  drawArmTokenRef.current = drawArmToken;
+  const onFootprintsChangedRef = useRef(onFootprintsChanged);
+  onFootprintsChangedRef.current = onFootprintsChanged;
+  const onSelectedFootprintIdChangedRef = useRef(onSelectedFootprintIdChanged);
+  onSelectedFootprintIdChangedRef.current = onSelectedFootprintIdChanged;
+  const onToggleSavedFootprintIdRef = useRef(onToggleSavedFootprintId);
+  onToggleSavedFootprintIdRef.current = onToggleSavedFootprintId;
+  const onClearSavedFootprintsRef = useRef(onClearSavedFootprints);
+  onClearSavedFootprintsRef.current = onClearSavedFootprints;
+  const selectedSavedFootprintIdsRef = useRef(selectedSavedFootprintIds);
+  selectedSavedFootprintIdsRef.current = selectedSavedFootprintIds;
+  // The select/remove effects are keyed only on their token props (so the
+  // SAME id can fire again on a fresh token). The companion id props are
+  // therefore read inside the effect from a latest-value ref rather than
+  // pulled in as a dep — otherwise an id change between bumps would re-fire
+  // the effect with no token bump, which is the wrong semantics.
+  const selectFootprintIdRef = useRef<string | number | null>(
+    selectFootprintId,
+  );
+  selectFootprintIdRef.current = selectFootprintId;
+  const removeFootprintIdRef = useRef<string | number | null>(
+    removeFootprintId,
+  );
+  removeFootprintIdRef.current = removeFootprintId;
+  // The set of feature ids Terra Draw assigned to the polygons currently
+  // loaded for editing. Tracked separately so we can scope removeFeatures()
+  // to just the editing set on edit-end and not nuke unrelated draft
+  // features (there shouldn't be any in V1, but the scoping is correct).
+  const editingFeatureIdsRef = useRef<Set<FeatureId>>(new Set());
+  // The id of the just-drawn polygon the finish handler auto-selected in
+  // the new-scheme flow. Tracked so we can deselect it on the transition
+  // to 'static' — Terra Draw exposes deselectFeature(id) but its snapshot
+  // doesn't surface selection state, so the caller must remember the id.
+  // Editing-path selections are handled separately via editingFeatureIdsRef
+  // and intentionally NOT recorded here.
+  const selectedDrawIdRef = useRef<FeatureId | null>(null);
+  // Mirrors Terra Draw's current selection (whatever feature is selected
+  // by mode = 'select'). Updated synchronously by the 'select' and
+  // 'deselect' listeners registered in onLoad — those listeners are the
+  // canonical source of truth per Terra Draw's API contract. Used by the
+  // selectFootprintToken effect to support panel-driven deselect: when
+  // the panel passes a null id, we deselect whatever this ref carries.
+  // Distinct from selectedDrawIdRef (which tracks just-drawn-pad selection
+  // for the lingering-highlight teardown in the new-scheme draw flow) —
+  // overlapping concerns, deliberately separate so each effect's
+  // teardown logic stays explicit.
+  const currentMapSelectionRef = useRef<FeatureId | null>(null);
   // Latest-value mirror so the async onLoad closure can apply the initial
-  // editing state if the prop was already set when Terra Draw was created.
-  const editingFootprintRef = useRef<GeoJSON.Polygon | null>(editingFootprint);
+  // editing state if the seed was already set when Terra Draw was created.
+  const editingSeedRef = useRef<GeoJSON.Polygon[] | null>(editingSeed);
   useEffect(() => {
-    editingFootprintRef.current = editingFootprint;
+    editingSeedRef.current = editingSeed;
   });
   // The saved-scheme source is created inside onLoad's async closure, which
   // doesn't see prop updates. Sync the ref via an effect (the canonical
   // "latest value" pattern) so the source.data reflects whatever the prop
   // is at the moment layers are first added — even if it changed between
   // mount and the async onLoad firing.
-  const savedSchemeFootprintRef = useRef<GeoJSON.Polygon | null>(
-    savedSchemeFootprint,
+  const savedSchemeFootprintsRef = useRef<SchemeFootprint[] | null>(
+    savedSchemeFootprints,
   );
   useEffect(() => {
-    savedSchemeFootprintRef.current = savedSchemeFootprint;
+    savedSchemeFootprintsRef.current = savedSchemeFootprints;
   });
 
   useEffect(() => {
@@ -386,13 +511,15 @@ export function Map({
           });
 
           // Saved-scheme footprint. Source starts empty; the syncing effect
-          // below fills it as savedSchemeFootprint changes. Same minzoom as
+          // below fills it as savedSchemeFootprints changes. Same minzoom as
           // projects-fill/-outline so a saved building only shows once the
           // user has zoomed into the project — at far-out zooms the project
           // is just a dot/label, so a tiny floating polygon would be noise.
           map.addSource('saved-scheme', {
             type: 'geojson',
-            data: savedSchemeToFeatureCollection(savedSchemeFootprintRef.current),
+            data: savedSchemesToFeatureCollection(
+              savedSchemeFootprintsRef.current,
+            ),
           });
 
           map.addLayer({
@@ -415,6 +542,27 @@ export function Map({
               'line-color': accent,
               'line-width': 1.5,
               'line-opacity': 0.9,
+            },
+          });
+
+          // Highlights whichever saved footprint is currently selected. Same
+          // source as saved-scheme-fill/-outline; just a separate layer with
+          // heavier styling and a filter keyed on selectedFootprintId. Saved
+          // buildings don't go through Terra Draw (they're presentation, not
+          // editable features), so this is the MapLibre-native path to "the
+          // app says THIS one is selected." Initial filter is literal false
+          // (matches nothing); the syncing effect below sets it to a real
+          // expression when selectedFootprintId is non-null.
+          map.addLayer({
+            id: 'saved-scheme-selected',
+            type: 'line',
+            source: 'saved-scheme',
+            minzoom: 14,
+            filter: ['literal', false],
+            paint: {
+              'line-color': accent,
+              'line-width': 3,
+              'line-opacity': 1,
             },
           });
 
@@ -453,6 +601,47 @@ export function Map({
               map.getCanvas().style.cursor = '';
             });
           }
+
+          // Saved-scheme map click toggles the id in App's set. e.preventDefault
+          // is not needed (MapLibre doesn't bubble layer clicks to the map's
+          // generic click handler), but the empty-background click handler below
+          // stops if e.features is non-empty by virtue of MapLibre's hit-test
+          // order — saved-scheme-fill is above the parcel/projects layers in
+          // the addLayer order, so this handler runs first and the generic
+          // map.on('click', ...) handler will fire afterward only if no saved-
+          // scheme feature was hit. To prevent the generic handler from clearing
+          // the set right after we just added to it, we set a sentinel on the
+          // event's originalEvent.
+          map.on('click', 'saved-scheme-fill', (e) => {
+            const id = e.features?.[0]?.properties?.id;
+            console.log('[saved-scheme click] id=', id, 'typeof=', typeof id, 'features=', e.features?.length);
+            if (typeof id === 'string') {
+              onToggleSavedFootprintIdRef.current(id);
+              // Mark this DOM event so the generic background click handler
+              // below knows not to clear (it would otherwise fire next).
+              (e.originalEvent as MouseEvent & { _savedSchemeHit?: boolean })._savedSchemeHit = true;
+            }
+          });
+
+          map.on('mouseenter', 'saved-scheme-fill', () => {
+            map.getCanvas().style.cursor = 'pointer';
+          });
+
+          map.on('mouseleave', 'saved-scheme-fill', () => {
+            map.getCanvas().style.cursor = '';
+          });
+
+          // Background click on the map clears saved-scheme selection. Only
+          // fires if no saved-scheme feature was hit (the layer-scoped handler
+          // above marks the event when it consumes a hit). Restricted to
+          // projects mode so parcel-mode clicks aren't affected.
+          map.on('click', (e) => {
+            if (modeRef.current !== 'projects') return;
+            const flag = (e.originalEvent as MouseEvent & { _savedSchemeHit?: boolean })._savedSchemeHit;
+            if (flag) return;
+            if (selectedSavedFootprintIdsRef.current.size === 0) return;
+            onClearSavedFootprintsRef.current();
+          });
 
           const initialParcelVisibility =
             modeRef.current === 'parcels' ? 'visible' : 'none';
@@ -533,6 +722,22 @@ export function Map({
           draw.start();
           drawRef.current = draw;
 
+          // Terra Draw's select/deselect events ARE the source of truth for
+          // "which footprint is currently selected": user click on the map,
+          // programmatic selectFeature/deselectFeature, mode changes that
+          // clear selection, and (future) keyboard nav all flow through
+          // here. The parent uses this to drive the per-row highlight in
+          // the workspace panel, so panel ↔ map selection stays in sync
+          // without the workspace having to track selection itself.
+          draw.on('select', ((id: FeatureId) => {
+            currentMapSelectionRef.current = id;
+            onSelectedFootprintIdChangedRef.current(id);
+          }) as (id: FeatureId) => void);
+          draw.on('deselect', ((_id: FeatureId) => {
+            currentMapSelectionRef.current = null;
+            onSelectedFootprintIdChangedRef.current(null);
+          }) as (id: FeatureId) => void);
+
           // Hide td-* layers immediately if we booted in Parcels mode. No
           // layers exist yet (Terra Draw lazy-adds them on first render), so
           // this is a no-op today but stays correct if init order ever
@@ -542,23 +747,38 @@ export function Map({
           // Sync the initial draw mode here because the mode/drawMode effect
           // that controls Terra Draw's mode ran before drawRef was populated
           // by this async load. Editing takes precedence over drawMode: if a
-          // footprint was already handed in at mount, load it and drop into
-          // select mode before the polygon-mode toggle gets a chance.
-          const initialEditing = editingFootprintRef.current;
-          if (modeRef.current === 'projects' && initialEditing) {
-            const result = draw.addFeatures([
-              {
-                type: 'Feature',
+          // seed was already handed in at mount, load every polygon and
+          // drop into select mode before the polygon-mode toggle gets a
+          // chance.
+          const initialEditing = editingSeedRef.current;
+          if (
+            modeRef.current === 'projects' &&
+            initialEditing &&
+            initialEditing.length > 0
+          ) {
+            const result = draw.addFeatures(
+              initialEditing.map((g) => ({
+                type: 'Feature' as const,
                 properties: { mode: 'polygon' },
-                geometry: initialEditing,
-              },
-            ]);
-            const newId = result[0]?.id;
-            if (newId !== undefined) {
-              editingFeatureIdRef.current = newId;
-              draw.setMode('select');
-              draw.selectFeature(newId);
+                geometry: g,
+              })),
+            );
+            const ids = result
+              .map((r) => r.id)
+              .filter((x): x is FeatureId => x !== undefined);
+            editingFeatureIdsRef.current = new Set(ids);
+            draw.setMode('select');
+            // Auto-select only when there's exactly one polygon to edit.
+            // With multiple polygons the user needs to click to pick one,
+            // otherwise we'd silently pin handles to whichever one we
+            // happen to load first.
+            if (ids.length === 1) {
+              draw.selectFeature(ids[0]);
             }
+            // Emit the seeded set so the parent learns Terra Draw's real
+            // feature ids immediately, instead of carrying stale ids from
+            // before the seed.
+            onFootprintsChangedRef.current(collectDrawnFootprints(draw));
           } else if (modeRef.current === 'projects' && drawModeRef.current) {
             draw.setMode('polygon');
           }
@@ -567,49 +787,39 @@ export function Map({
             const [id] = args as [FeatureId, unknown];
             const instance = drawRef.current;
             if (!instance) return;
-            const features = instance.getSnapshot();
-            const finished = features.find((f) => f.id === id);
+            const finished = instance
+              .getSnapshot()
+              .find((f) => f.id === id);
             if (!finished || finished.geometry.type !== 'Polygon') return;
 
-            // V1: only one footprint at a time. Drop any prior finished
-            // polygons left in the store so the just-drawn one is the sole
-            // visible draft.
-            const stale = features
-              .map((f) => f.id)
-              .filter(
-                (fid): fid is FeatureId =>
-                  fid !== undefined && fid !== id,
-              );
-            if (stale.length > 0) {
-              instance.removeFeatures(stale);
-            }
-
-            onFootprintDrawnRef.current(finished.geometry as GeoJSON.Polygon);
+            // Emit the COMPLETE current set of drawn polygons — including
+            // any prior finished features that came before this one. The
+            // parent (and downstream save flow) owns the multi-footprint
+            // shape; we never strip features here.
+            onFootprintsChangedRef.current(collectDrawnFootprints(instance));
 
             // Hand the just-drawn polygon to select mode so the user can
             // rotate, drag, and edit vertices without an intermediate click.
             // selectFeature auto-uses the registered select mode.
             instance.setMode('select');
             instance.selectFeature(id);
+            selectedDrawIdRef.current = id;
           }) as (id: FeatureId, context: unknown) => void);
 
           // Edits in select mode (drag whole feature, rotate, vertex drag,
           // midpoint insert, vertex delete) emit 'change' with type 'update'.
           // Polygon mode also emits 'change' as the user clicks vertices
           // during draw — those are gated out by checking the current mode.
+          // We always emit the COMPLETE current set so the parent sees
+          // additions, deletions, and per-feature edits through the same
+          // pipe.
           draw.on('change', ((...args: unknown[]) => {
             const [, type] = args as [FeatureId[], string, unknown?];
             const instance = drawRef.current;
             if (!instance) return;
             if (type !== 'update') return;
             if (instance.getMode() !== 'select') return;
-            const polygonFeature = instance
-              .getSnapshot()
-              .find((f) => f.geometry.type === 'Polygon');
-            if (!polygonFeature) return;
-            onFootprintDrawnRef.current(
-              polygonFeature.geometry as GeoJSON.Polygon,
-            );
+            onFootprintsChangedRef.current(collectDrawnFootprints(instance));
           }) as (ids: FeatureId[], type: string, context?: unknown) => void);
         } catch {
           if (!cancelled) {
@@ -671,31 +881,110 @@ export function Map({
     // edited the editing-load effect below owns the mode (it switches to
     // 'select' and keeps the feature selected). Short-circuit here so we
     // don't clobber that with 'polygon' or 'static'.
-    if (editingFootprint) return;
+    if (editingSeed) return;
     if (mode === 'projects' && drawMode) {
       draw.setMode('polygon');
     } else {
+      // Clear the lingering selection highlight from the new-scheme draw
+      // flow before parking the instance. setMode('static') alone leaves
+      // the previously selected feature visually highlighted because
+      // Terra Draw retains selection state across mode changes.
+      if (
+        selectedDrawIdRef.current !== null &&
+        draw.hasFeature(selectedDrawIdRef.current)
+      ) {
+        draw.deselectFeature(selectedDrawIdRef.current);
+      }
+      selectedDrawIdRef.current = null;
       draw.setMode('static');
     }
-  }, [mode, drawMode, editingFootprint]);
+  }, [mode, drawMode, editingSeed]);
 
-  // Load (or clear) a scheme footprint into Terra Draw for editing. When the
-  // prop transitions from null → polygon, the polygon is added to the
-  // instance, Terra Draw switches to select mode, and the new feature is
-  // selected so drag/rotate/vertex handles appear without a click. When the
-  // prop transitions back to null (save or cancel), the editing feature is
-  // removed; the mode effect above then restores 'static' or 'polygon'.
+  // Imperative re-arm: bumping drawArmToken forces Terra Draw back into
+  // polygon mode regardless of its current mode. This is what lets a
+  // "Draw another" button work after the finish handler has parked the
+  // instance in 'select', and what lets the user add a new footprint
+  // during an edit session (where the editing-load effect also leaves
+  // the instance in 'select'). Deliberately NOT gated on editingSeed —
+  // arming must work both for new-scheme and edit flows. The finish
+  // handler still auto-selects each completed pad so vertex/rotate
+  // handles appear without an intermediate click.
+  useEffect(() => {
+    const draw = drawRef.current;
+    if (!draw) return;
+    // Initial mount carries drawArmToken === 0; ignore so we don't fight
+    // the boot-time mode/drawMode effect that decides static vs polygon.
+    if (drawArmToken === 0) return;
+    if (modeRef.current !== 'projects') return;
+    draw.setMode('polygon');
+  }, [drawArmToken]);
+
+  // Imperative "select this footprint": parent bumps selectFootprintToken
+  // after first setting selectFootprintId in the same React tick, so by
+  // the time this effect runs the latest-value ref carries the id captured
+  // at the bump. We switch into select mode and selectFeature(id); the
+  // 'select' listener registered in onLoad fires and reports the new
+  // selection up — no manual setState here, the event is the truth.
+  useEffect(() => {
+    const draw = drawRef.current;
+    if (!draw) return;
+    if (selectFootprintToken === 0) return;
+    if (modeRef.current !== 'projects') return;
+    const id = selectFootprintIdRef.current;
+    if (id === null) {
+      // Null = deselect whatever's currently selected on the map. The
+      // 'deselect' listener will fire and report null up to the parent,
+      // clearing App's selectedFootprintId. No manual setState here.
+      const current = currentMapSelectionRef.current;
+      if (current !== null && draw.hasFeature(current)) {
+        draw.deselectFeature(current);
+      }
+      return;
+    }
+    if (!draw.hasFeature(id)) return;
+    draw.setMode('select');
+    draw.selectFeature(id);
+  }, [selectFootprintToken]);
+
+  // Imperative "remove this footprint": parent bumps removeFootprintToken
+  // after setting removeFootprintId. Defensive deselect first because
+  // Terra Draw's removeFeatures makes no documented guarantee about
+  // clearing selection on a removed feature; then re-emit the resulting
+  // snapshot because removeFeatures doesn't (documented) fire 'change'
+  // on programmatic removal — the parent needs the new set to drop the
+  // deleted id from metaById.
+  useEffect(() => {
+    const draw = drawRef.current;
+    if (!draw) return;
+    if (removeFootprintToken === 0) return;
+    const id = removeFootprintIdRef.current;
+    if (id === null) return;
+    if (!draw.hasFeature(id)) return;
+    draw.deselectFeature(id);
+    draw.removeFeatures([id]);
+    onFootprintsChangedRef.current(collectDrawnFootprints(draw));
+  }, [removeFootprintToken]);
+
+  // Load (or clear) a set of scheme footprints into Terra Draw for editing.
+  // SEED ONCE: when editingSeed transitions from null → array, every polygon
+  // is added to the instance, Terra Draw switches to select mode, and (if
+  // there's exactly one polygon) it's selected so drag/rotate/vertex handles
+  // appear without a click. From that moment on the app reads geometry OUT
+  // via collectDrawnFootprints — it never pushes back in for the duration
+  // of the session. When editingSeed transitions back to null (save or
+  // cancel), the editing features are removed; the mode effect above then
+  // restores 'static' or 'polygon'.
   //
   // The parent must hide the matching saved-scheme static layer while
-  // editing, otherwise the user sees two identical polygons.
+  // editing, otherwise the user sees two identical sets of polygons.
   useEffect(() => {
     const map = mapRef.current;
     const draw = drawRef.current;
     if (!map || !layersReadyRef.current || !draw) return;
 
-    if (editingFootprint) {
-      // Drop any prior draft features (V1: one footprint at a time) before
-      // injecting the editing polygon so the editor sees only this geometry.
+    if (editingSeed) {
+      // Drop any prior draft features before injecting the editing
+      // polygons so the editor sees only this set.
       const existing = draw
         .getSnapshot()
         .map((f) => f.id)
@@ -704,27 +993,35 @@ export function Map({
         draw.removeFeatures(existing);
       }
 
-      const result = draw.addFeatures([
-        {
-          type: 'Feature',
+      const result = draw.addFeatures(
+        editingSeed.map((g) => ({
+          type: 'Feature' as const,
           properties: { mode: 'polygon' },
-          geometry: editingFootprint,
-        },
-      ]);
-      const newId = result[0]?.id;
-      if (newId !== undefined) {
-        editingFeatureIdRef.current = newId;
-        draw.setMode('select');
-        draw.selectFeature(newId);
+          geometry: g,
+        })),
+      );
+      const ids = result
+        .map((r) => r.id)
+        .filter((x): x is FeatureId => x !== undefined);
+      editingFeatureIdsRef.current = new Set(ids);
+      draw.setMode('select');
+      // Single → auto-select for a one-click edit. Multiple → user clicks
+      // to pick one (auto-selecting an arbitrary polygon would mislead).
+      if (ids.length === 1) {
+        draw.selectFeature(ids[0]);
       }
+      // Emit the seeded set so the workspace immediately knows the real
+      // Terra Draw feature ids for the polygons it just handed in.
+      onFootprintsChangedRef.current(collectDrawnFootprints(draw));
     } else {
-      const editingId = editingFeatureIdRef.current;
-      if (editingId !== null && draw.hasFeature(editingId)) {
-        draw.removeFeatures([editingId]);
+      for (const id of editingFeatureIdsRef.current) {
+        if (draw.hasFeature(id)) {
+          draw.removeFeatures([id]);
+        }
       }
-      editingFeatureIdRef.current = null;
+      editingFeatureIdsRef.current = new Set();
     }
-  }, [editingFootprint]);
+  }, [editingSeed]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -770,7 +1067,8 @@ export function Map({
   }, [mode]);
 
   // Push saved-scheme footprint changes into the GeoJSON source. Clears to
-  // an empty FC when null (no scheme selected or project has none yet).
+  // an empty FC when null (no scheme selected or project has none yet) or
+  // when the array is empty.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !layersReadyRef.current) return;
@@ -778,8 +1076,29 @@ export function Map({
       | maplibregl.GeoJSONSource
       | undefined;
     if (!source) return;
-    source.setData(savedSchemeToFeatureCollection(savedSchemeFootprint));
-  }, [savedSchemeFootprint]);
+    source.setData(savedSchemesToFeatureCollection(savedSchemeFootprints));
+  }, [savedSchemeFootprints]);
+
+  // Sync the saved-scheme-selected layer's filter to the multi-select
+  // set. Empty set → literal false (nothing matches, layer hidden).
+  // Non-empty → match any feature whose id is in the array. String
+  // coercion mirrors the defensive note from before: App's selection
+  // values are string | number, the GeoJSON properties carry
+  // SchemeFootprint.id (a UUID string).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !layersReadyRef.current) return;
+    if (selectedSavedFootprintIds.size === 0) {
+      map.setFilter('saved-scheme-selected', ['literal', false]);
+    } else {
+      const ids = Array.from(selectedSavedFootprintIds).map(String);
+      map.setFilter('saved-scheme-selected', [
+        'in',
+        ['get', 'id'],
+        ['literal', ids],
+      ]);
+    }
+  }, [selectedSavedFootprintIds]);
 
   useEffect(() => {
     const map = mapRef.current;

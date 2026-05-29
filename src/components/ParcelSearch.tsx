@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { Search as SearchIcon, X } from 'lucide-react'
 import { lookupParcelByApn } from '../lib/data'
 import type { Parcel } from '../lib/types'
@@ -45,11 +45,22 @@ export function ParcelSearch({
     [parcels, selectedParcelId],
   )
 
-  useEffect(() => {
+  // Mirror upstream selection into the input's query when a new parcel is
+  // chosen externally (map click, parent restore on mount). Skips the null
+  // case on purpose — deselect-clears the query via the clear button, not
+  // here, so users typing fresh queries aren't clobbered by a deselect.
+  // Pattern: React's documented "adjusting state on prop change" — see
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-state-when-a-prop-changes
+  // The lastSelectedParcel guard ensures we only mirror when selectedParcel's
+  // identity changes (useMemo'd above), not on every render — otherwise we'd
+  // overwrite the user's in-progress typing.
+  const [lastSelectedParcel, setLastSelectedParcel] = useState(selectedParcel)
+  if (selectedParcel !== lastSelectedParcel) {
+    setLastSelectedParcel(selectedParcel)
     if (selectedParcel) {
       setQuery(parcelDisplayValue(selectedParcel))
     }
-  }, [selectedParcel])
+  }
 
   const filteredParcels = useMemo(() => {
     const trimmed = query.trim()
@@ -57,9 +68,19 @@ export function ParcelSearch({
     return parcels.filter((p) => parcelMatchesQuery(p, trimmed))
   }, [parcels, query])
 
-  useEffect(() => {
+  // Reset the keyboard-highlighted row whenever the filtered list reflows
+  // (user typed, or parcels prop changed) so pressing Enter selects the
+  // first match in the freshly-filtered list, not a stale index.
+  // Pattern: React's documented "adjusting state on prop change" — see
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-state-when-a-prop-changes
+  // filteredParcels is useMemo'd just above, so its identity is stable across
+  // renders unless `parcels` or `query` actually changed — same semantics as
+  // the previous `useEffect(..., [filteredParcels])` dep array.
+  const [lastFilteredParcels, setLastFilteredParcels] = useState(filteredParcels)
+  if (filteredParcels !== lastFilteredParcels) {
+    setLastFilteredParcels(filteredParcels)
     setHighlightedIndex(-1)
-  }, [filteredParcels])
+  }
 
   const closeDropdown = useCallback(() => {
     setDropdownOpen(false)

@@ -1,5 +1,5 @@
 import { useState, type ReactNode, type FormEvent } from 'react'
-import { useAuth } from '../lib/auth'
+import { useAuth } from '../lib/auth-context'
 
 type Mode = 'signin' | 'signup'
 

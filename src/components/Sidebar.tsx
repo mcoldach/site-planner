@@ -27,17 +27,14 @@ export function Sidebar({ selectedParcelId, allParcels: _allParcels }: SidebarPr
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!selectedParcelId) {
-      setContext(null)
-      setError(null)
-      setLoading(false)
-      return
-    }
-
+    if (!selectedParcelId) return
     let cancelled = false
+    // Synchronous priming of loading state before kicking off an async
+    // fetch — the canonical data-fetch pattern in React docs. The
+    // set-state-in-effect rule's exception only covers writes inside async
+    // callbacks (.then/.catch/.finally) and doesn't recognize the prime.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
-    setError(null)
-    setContext(null)
 
     void fetchParcelWithJurisdictionAndClaims(selectedParcelId)
       .then((data) => {

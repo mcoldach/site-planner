@@ -75,10 +75,6 @@ export function ProjectModal({
 
   useEffect(() => {
     if (!isOpen) return
-    setName('')
-    setParcelId(null)
-    setSubmitting(false)
-    setError(null)
     const id = window.requestAnimationFrame(() => {
       nameInputRef.current?.focus()
     })

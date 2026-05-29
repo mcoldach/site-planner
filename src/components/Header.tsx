@@ -1,6 +1,6 @@
 import { ParcelSearch } from './ParcelSearch'
 import type { Parcel } from '../lib/types'
-import { useAuth } from '../lib/auth'
+import { useAuth } from '../lib/auth-context'
 
 export type AppMode = 'projects' | 'parcels' | 'sources'
 

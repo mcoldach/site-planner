@@ -88,17 +88,69 @@ export type Project = {
 /**
  * A saved Scheme as returned by the `schemes_geojson` view.
  *
- * `footprint` arrives from PostGIS via ST_AsGeoJSON as a GeoJSON.Polygon
- * (the underlying column is geometry(Polygon, 4326)); `footprint_sf` is
- * precomputed server-side from ST_Area on the geography cast, so the client
- * doesn't recompute it (and stays consistent with PostGIS's area, not turf's).
+ * The view now returns scheme-level rows (no footprint geometry): one row per
+ * scheme with the union area of its footprints precomputed server-side via
+ * ST_Area on the geography cast, and the footprint count from the
+ * scheme_footprints table.
  */
 export type Scheme = {
   id: string;
   name: string;
-  height_ft: number;
+  footprint_count: number;
+  footprint_sf: number; // union area of all footprints, sq ft
+  created_at: string;
+};
+
+/**
+ * One footprint belonging to a scheme, as returned by the
+ * `scheme_footprints_geojson` view. Geometry arrives from PostGIS via
+ * ST_AsGeoJSON as a GeoJSON.Polygon; `footprint_sf` is precomputed
+ * server-side so the client uses PostGIS's canonical area.
+ */
+export type SchemeFootprint = {
+  id: string;
+  scheme_id: string;
+  ordinal: number;
+  label: string | null;
+  use_code: string | null;
+  height_ft: number | null;
   footprint: GeoJSON.Polygon;
   footprint_sf: number;
+};
+
+/**
+ * Client-side shape Terra Draw assembles for save/update. The server-side
+ * `save_scheme` / `update_scheme` RPCs accept a jsonb array of these.
+ */
+export type FootprintInput = {
+  geojson: GeoJSON.Polygon;
+  height_ft: number | null;
+  label?: string | null;
+  use_code?: string | null;
+};
+
+/**
+ * One in-flight polygon currently owned by Terra Draw. The `id` is Terra
+ * Draw's stable feature id (string | number) — kept so the workspace can
+ * thread it through saves/edits without losing identity between renders.
+ * Geometry is read OUT of Terra Draw on every change and emitted as a
+ * complete set; the app never pushes back into Terra Draw mid-session.
+ */
+export type DrawnFootprint = {
+  id: string | number;
+  geometry: GeoJSON.Polygon;
+};
+
+/**
+ * Per-footprint UI state keyed by Terra Draw's stable feature id (stringified).
+ * The workspace owns this in app state — Terra Draw is the source of truth
+ * for geometry, but it has no opinion on labels or heights. `height_ft` is
+ * null until the user enters a per-row value; rows with null fall back to
+ * the panel's default height input at save time and at display time.
+ */
+export type FootprintMeta = {
+  label: string;
+  height_ft: number | null;
 };
 
 /**
@@ -130,6 +182,10 @@ export type ComplianceEntry = {
   actual_ft?: number;
   limit_ft?: number;
   margin_ft?: number;
+  // per-footprint entries
+  footprint_id?: string;
+  ordinal?: number;
+  label?: string | null;
 };
 
 export type ComplianceResult = {
