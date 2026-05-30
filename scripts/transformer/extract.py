@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 import re
 
-from detect import Shape
+from detect import Shape, _clean_header_zone, _is_simple_zone
 
 
 @dataclass
@@ -22,9 +22,11 @@ class RawExtraction:
     footnotes: list = field(default_factory=list)
     zone: str | None = None
     row_index: int = -1
+    notes: str | None = None   # qualifier text split out of a polluted unit (§8.8)
 
 
 _ZONE_RE = re.compile(r"^\s*([^:]+?)\s*:")
+_QUALIFIER_MARKERS = (" or ", "average", "whichever")
 
 
 def extract_zone_from_caption(caption: str | None) -> str | None:
@@ -36,10 +38,73 @@ def extract_zone_from_caption(caption: str | None) -> str | None:
     return None
 
 
+def _split_unit_qualifier(unit: str | None) -> tuple[str | None, str | None]:
+    """The parser sometimes packs a prose qualifier into the unit field, e.g.
+    'ft or average of two adjacent ... whichever is less'. Keep the leading
+    unit token; return the full original text as a note. Per rule_keys.md §8.8
+    the number is stored with the clean unit; the qualifier lives in notes."""
+    if not unit:
+        return unit, None
+    low = unit.lower()
+    if any(m in low for m in _QUALIFIER_MARKERS):
+        clean = unit.split(" or ")[0].strip()
+        return (clean or None), unit.strip()
+    return unit, None
+
+
 def extract(shape: Shape, table_row: dict[str, Any]) -> list[RawExtraction]:
     if shape == Shape.PER_ZONE_DIMENSIONAL:
         return _extract_per_zone_dimensional(table_row)
+    if shape == Shape.PER_ZONE_MATRIX:
+        return _extract_per_zone_matrix(table_row)
     return []
+
+
+def _extract_per_zone_matrix(table_row: dict[str, Any]) -> list[RawExtraction]:
+    """One RawExtraction per (zone-column, metric-row) cell that carries a
+    value. Row identity is label_path[-1]; the full label_path is passed
+    through untouched (the mapper resolves it — we never try to repair the
+    parser's nesting here). Cells with parse_status not_applicable/empty are
+    skipped. Zone comes from cell['column']; non-simple zone columns (compound
+    use-class headers, blank columns) are skipped, which defers those tables
+    cleanly without per-table special-casing."""
+    rows = table_row.get("rows") or []
+    table_id = table_row.get("id")
+    table_number = table_row.get("table_number")
+    section_ref = f"UDC §{table_number}" if table_number else "unknown"
+
+    extractions: list[RawExtraction] = []
+    for idx, row in enumerate(rows):
+        label_path = row.get("label_path") or []
+        if not label_path:                      # 7.4.2-D parser artifacts
+            continue
+        row_label = str(label_path[-1])
+        cells = row.get("cells") or []
+
+        for cell in cells:
+            status = cell.get("parse_status")
+            if status not in ("numeric", "non_numeric"):
+                continue
+            zone = _clean_header_zone(cell.get("column"))
+            if not _is_simple_zone(zone):        # defers 7.4.2-B compound cols
+                continue
+            unit, note = _split_unit_qualifier(cell.get("unit"))
+            extractions.append(RawExtraction(
+                document_table_id=table_id,
+                table_number=table_number,
+                section_ref=section_ref,
+                label_path=label_path,
+                row_label=row_label,
+                value=cell.get("value"),
+                unit=unit,
+                parse_status=status,
+                footnotes=cell.get("footnotes") or [],
+                zone=zone,
+                row_index=idx,
+                notes=note,
+            ))
+
+    return extractions
 
 
 def _extract_per_zone_dimensional(table_row: dict[str, Any]) -> list[RawExtraction]:

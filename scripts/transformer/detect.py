@@ -1,18 +1,27 @@
 """Shape detectors for document_tables rows.
 
 Each detector is a pure function over the headers + caption + rows of a
-single document_tables row. Returns a Shape enum value if confident, or
-None. The transformer runs all detectors in order; first hit wins.
+single document_tables row. Returns a Detection if confident, or None.
+detect_shape runs detectors in order; first hit wins.
+
+NOTE on ordering: per-zone-matrix MUST be checked before per-zone-dimensional.
+The dimensional detector keys on label_path[0] category prefixes, which the
+matrix tables also satisfy (their rows are Lot/Setbacks/Height/Other too), so
+dimensional would otherwise claim the matrix tables first and extract nothing.
+Matrix uses a precise headers[0]=="Zone District" signature that the genuine
+dimensional tables (empty/label header[0]) do not match.
 """
 
 from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+import re
 
 
 class Shape(str, Enum):
     PER_ZONE_DIMENSIONAL = "per_zone_dimensional"
+    PER_ZONE_MATRIX = "per_zone_matrix"
     UNKNOWN = "unknown"
 
 
@@ -23,27 +32,73 @@ class Detection:
     reason: str
 
 
+def _norm(s: Any) -> str:
+    return " ".join(str(s or "").lower().split())
+
+
+_FOOTNOTE_RE = re.compile(r"\s*\[\d+\]")
+_SIMPLE_ZONE_RE = re.compile(r"[A-Z0-9][A-Z0-9 \-]*")
+
+
+def _clean_header_zone(s: Any) -> str:
+    out = _FOOTNOTE_RE.sub("", str(s or ""))
+    return " ".join(out.replace("\n", " ").split()).strip()
+
+
+def _is_simple_zone(z: str) -> bool:
+    """Short, all-caps/digit/hyphen code. Rejects compound use-class columns
+    like 'R-Flex Low Residential Uses' (deferred shape)."""
+    if not z or len(z) > 10:
+        return False
+    return _SIMPLE_ZONE_RE.fullmatch(z) is not None
+
+
 def detect_shape(table_row: dict[str, Any]) -> Detection:
     """Dispatch to detectors. First hit wins; falls through to UNKNOWN."""
-    for detector in (_detect_per_zone_dimensional,):
+    for detector in (_detect_per_zone_matrix, _detect_per_zone_dimensional):
         result = detector(table_row)
         if result is not None:
             return result
     return Detection(Shape.UNKNOWN, "low", "no detector matched")
 
 
+def _detect_per_zone_matrix(table_row: dict[str, Any]) -> Detection | None:
+    """Per-zone matrix table.
+
+    Signature:
+      - headers[0] normalizes to "zone district"
+      - >= 3 columns total
+    Confidence reflects how many of headers[1:] are simple zone codes. A
+    table with the right header[0] but no simple zone columns (e.g. 7.4.2-B's
+    compound 'R-Flex Low Residential Uses' columns) is still claimed as matrix
+    so the dimensional detector can't grab it — the extractor then defers it
+    by emitting nothing for non-simple zone columns.
+    """
+    headers = table_row.get("headers") or []
+    rows = table_row.get("rows") or []
+    if len(headers) < 3 or len(rows) == 0:
+        return None
+    if _norm(headers[0]) != "zone district":
+        return None
+
+    simple = sum(1 for h in headers[1:] if _is_simple_zone(_clean_header_zone(h)))
+    if simple >= 2:
+        return Detection(Shape.PER_ZONE_MATRIX, "high",
+                         f"headers[0]='Zone District'; {simple} simple zone columns")
+    return Detection(Shape.PER_ZONE_MATRIX, "low",
+                     "headers[0]='Zone District' but no simple zone columns "
+                     "(compound headers?) — extractor will defer")
+
+
 def _detect_per_zone_dimensional(table_row: dict[str, Any]) -> Detection | None:
     """Per-zone dimensional table.
 
     Signature:
-      - 3-column structure (parser-confirmed; we don't trust this strictly)
       - headers[0] is the empty/label column
-      - headers[1] is "District area (minimum)" or similar zone identifier
-      - headers[2] is the zone-area value (e.g. "10 ac.")
       - rows have label_path entries from a small known vocabulary
 
-    A more robust check: at least 30% of rows have a label_path whose
-    first element starts with "Setbacks", "Lot", "Height", or "Other".
+    Robust check: at least 30% of rows have a label_path whose first element
+    starts with "Setbacks", "Lot", "Height", or "Other".
     """
     headers = table_row.get("headers") or []
     rows = table_row.get("rows") or []
@@ -51,7 +106,6 @@ def _detect_per_zone_dimensional(table_row: dict[str, Any]) -> Detection | None:
     if len(headers) < 2 or len(rows) == 0:
         return None
 
-    # The CS UDC per-zone dimensional shape uses these category prefixes.
     expected_category_prefixes = ("Setbacks", "Lot", "Height", "Other")
     matching = 0
     total_with_label = 0
