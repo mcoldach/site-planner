@@ -1,0 +1,50 @@
+-- NOT YET APPLIED. Naming convention with leading underscore + .todo extension
+-- keeps this out of the supabase CLI migration sequence. Rename to
+-- <14-digit-timestamp>_project_overrides.sql when ready to apply.
+--
+-- Context: paired with rezoning-of-projects work. Captures the second layer
+-- of the two-layer ruleset model (ordinance vs project). Ordinance-level
+-- claims live in `claims`; project-specific deviations (variances, PUDs,
+-- development agreements, grandfathering, exemptions) live here and override
+-- the ordinance claim at compliance time, scoped to one project only.
+--
+-- The compliance engine signature change paired with this:
+--   check_scheme_compliance(scheme_id, project_id) — currently takes only
+--   the scheme; the project_id arg lets the engine layer overrides.
+
+create table public.project_overrides (
+  id                uuid primary key default gen_random_uuid(),
+  project_id        uuid not null references public.projects(id) on delete cascade,
+  claim_id          uuid not null references public.claims(id)   on delete restrict,
+  -- Override payload: same shape vocabulary as claims (constraint_kind,
+  -- value_kind, value), so the engine reads either source uniformly.
+  constraint_kind   public.constraint_kind_t not null,
+  value_kind        public.value_kind_t      not null,
+  value             jsonb                    not null,
+  -- Why the override exists. NOT optional — every override is justified.
+  override_source   text not null,   -- e.g. 'variance', 'pud', 'dev_agreement', 'grandfathered', 'exemption'
+  override_doc_url  text,            -- optional link to source document
+  note              text not null,   -- human explanation; required
+  -- Provenance, lifecycle.
+  review_state      public.review_state_t not null default 'draft',
+  created_by        uuid references auth.users(id),
+  created_at        timestamptz not null default now(),
+  superseded_at     timestamptz,
+  superseded_by     uuid references public.project_overrides(id),
+  -- Shape integrity: same CHECK as claims.
+  constraint project_overrides_value_shape_valid
+    check (public.claim_value_shape_valid(constraint_kind, value_kind, value))
+);
+
+-- One active (non-superseded) override per (project, claim).
+create unique index project_overrides_one_active_per_claim
+  on public.project_overrides (project_id, claim_id)
+  where superseded_at is null;
+
+-- Compliance engine lookup pattern.
+create index project_overrides_lookup_idx
+  on public.project_overrides (project_id, claim_id, review_state);
+
+-- RLS: project members read/write their own project's overrides.
+-- (Policy left as TODO — wire up with the existing project membership model
+-- when this migration is applied.)

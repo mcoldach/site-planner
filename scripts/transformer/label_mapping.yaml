@@ -1,0 +1,146 @@
+# Label mapping for per-zone dimensional tables.
+#
+# How matching works: the transformer normalizes both the label_path
+# category (strips trailing "[N]" footnote markers and the surrounding
+# "(minimum)" / "(maximum)" suffix) and the row label (lowercase, collapse
+# whitespace). It looks up category in `categories` to derive the rule
+# family + constraint_kind, then looks up the normalized row label in
+# `rows`. If the row label is a "composite" (combines multiple rules or
+# rule+scope), the lookup returns a composite key handled in composites.py.
+#
+# Strict policy: ambiguous rows → unmapped_table_labels, no claim emitted.
+
+categories:
+  "setbacks":
+    rule_family: setback
+    constraint_kind: scalar_min
+  "lot standards":
+    rule_family: lot
+    constraint_kind: scalar_min   # most rows; lot_coverage rows override below
+  "lot coverage":
+    rule_family: lot
+    rule_key: lot.coverage
+    constraint_kind: scalar_max
+  "lot and density standards":
+    rule_family: lot
+    constraint_kind: scalar_min   # rows override
+  "height":
+    rule_family: building
+    rule_key: building.height
+    constraint_kind: scalar_max
+  "other standards":
+    rule_family: other
+    constraint_kind: scalar_min   # rows override
+
+# Simple row labels: normalized label → mapping fragment.
+# rule_key + scope additions; constraint_kind inherits from category unless
+# overridden here.
+rows:
+  # Setback row labels
+  "front":
+    rule_key: setback.front
+  "front (minimum)":
+    rule_key: setback.front
+  "side":
+    rule_key: setback.side
+  "side (minimum)":
+    rule_key: setback.side
+  "side - interior":
+    rule_key: setback.side
+  "rear":
+    rule_key: setback.rear
+  "rear (minimum)":
+    rule_key: setback.rear
+  "corner lot - side street":
+    rule_key: setback.side_street
+  "front parking setback (minimum)":
+    rule_key: setback.front
+    scope:
+      building_element: parking
+  "house":
+    rule_key: setback.front
+    scope:
+      building_element: principal_building
+  "house - general":
+    rule_key: setback.front
+    scope:
+      building_element: principal_building
+  "detached garage or carport":
+    rule_key: setback.rear
+    scope:
+      building_element: accessory_building
+
+  # Lot row labels
+  "lot area (minimum)":
+    rule_key: lot.area
+    constraint_kind: scalar_min
+  "lot width (minimum)":
+    rule_key: lot.width
+    constraint_kind: scalar_min
+  "lot coverage (maximum)":
+    rule_key: lot.coverage
+    constraint_kind: scalar_max
+  "minimum lot size":
+    rule_key: lot.area
+    constraint_kind: scalar_min
+
+  # Lot coverage sub-bands (under "Lot Coverage (maximum)" category)
+  "building equal to or exceeding 18 ft in height":
+    rule_key: lot.coverage
+    scope:
+      building_height_condition: gte_18ft
+  "buildings less than 18 ft in height":
+    rule_key: lot.coverage
+    scope:
+      building_height_condition: lt_18ft
+
+  # Height row labels
+  "building height":
+    rule_key: building.height
+  "residential use":
+    rule_key: building.height
+    scope:
+      use_class: residential
+  "non-residential use":
+    rule_key: building.height
+    scope:
+      use_class: non_residential
+
+# Composite handlers: row labels that fuse multiple rules or rule+scope.
+# The transformer dispatches to a named Python function in composites.py;
+# the function returns one or more (rule_key, constraint_kind, scope) tuples.
+composites:
+  "front and side street": split_front_and_side_street
+  "front and side street frontages": split_front_and_side_street
+  "house and garage adjacent to collector, parkway, or arterial street":
+    house_garage_adjacent_arterial
+  "house and garage adjacent to collector parkway, or arterial street":
+    house_garage_adjacent_arterial
+  "house and attached garage or carport, general":
+    house_and_attached_garage_general
+  "garage - general (from back of sidewalk)":
+    garage_general_from_sidewalk
+  "detached garage or carport accessed from alley or rear access easement":
+    detached_garage_from_alley
+  "adjacent to existing or planned residential zone or use":
+    adjacent_residential_zone_or_use
+
+# Rows that are section dividers / category headers fused into a label,
+# not actual rules. These map to nothing and are NOT logged as unmapped
+# (we recognize them as non-rule rows).
+ignore_rows:
+  - "minimum"
+  - "maximum"
+  - "non-residential uses"
+  - "residential uses"
+  - "all residential structures"
+  - "all residential structures except garages"
+  - "non-residential structures"
+  - "residential structures"
+  - "duplex on one lot"
+  - "single-family attached"
+  - "interior, non-residential use"
+  - "interior, residential use"
+  - "corner lot side street, non-residential use"
+  - "corner lot side street, residential use"
+  - "street-loaded garage"
