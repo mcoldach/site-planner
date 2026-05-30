@@ -271,3 +271,55 @@ editable-primitive editor. The editor *is* the product.
   on Municode.
 - Test ingest doc: CS City Code, id `99381cc5-26d9-4191-be23-49556082b9c2`.
 - Ingest entry point: `python ingest.py <doc_id>` in `scripts/ingest/`.
+**2026-05-30** — Transformer foundation shipped. `scripts/transformer/` with
+detect/extract/mapping/composites/build/transform modules,
+`label_mapping.yaml`, `unmapped_table_labels` table. First shape:
+per-zone-dimensional (CS UDC tables 7.2.2-* through 7.2.4-*). End-to-end run
+produced 133 extracted claims across 9 rule_keys and 16 zones (plus the 16
+seeded approved claims for 149 total). 5 rows punted to unmapped queue
+(density-band, complex composite, mis-classified parking).
+
+**2026-05-30** — Idempotency locked. `claims_transformer_dedup_idx` is a
+partial unique index with `NULLS NOT DISTINCT` on (source_table_id, rule_key,
+zone_district_code, scope, review_state) WHERE source_table_id IS NOT NULL.
+`unmapped_dedup_idx` the same on (document_table_id, label_path_text).
+Transformer catches 23505 and counts as skipped. Verified by re-running:
+139/139 skipped, 0 inserted, 0 failed.
+
+**2026-05-30** — Spec drift caught at run time. `rule_keys.md` §12 referenced
+`review_state='draft'` and `source_class='official_source'`. The live enums
+are extracted/reviewed/approved/superseded/rejected/conflicted and
+official/professional/project_note/ai_inference. Strict-write policy caught
+it before pollution. Backlog: update `rule_keys.md` to match the schema.
+
+**2026-05-30** — Postgres NULL-in-unique-index trap: first dedup index was
+created without `NULLS NOT DISTINCT`, so all 24 claims with
+zone_district_code=NULL evaded uniqueness on the second run. Fixed by
+drop+recreate with `NULLS NOT DISTINCT` (Postgres 15+ syntax, Supabase
+supports). Worth remembering for every future partial unique index where a
+key column can be NULL.
+
+**Phase 2 backlog reshuffle:**
+- "Hybrid retrieval + claim-proposer foundation" REPLACED with two items:
+  → Claim transformer (deterministic, table→claims) [first shape DONE]
+  → Source navigation (LLM as read tool, Sources tab) [future]
+- Next shapes: per-zone-matrix (7.4.2-*) and per-use (7.4.10-*).
+- After shape coverage: Sources tab UI for review + claim editing
+  (`edit_claim` RPC + UI surface; required `edit_note` enforced at RPC).
+
+**Known limitations carried forward:**
+- 24 of the 133 extracted claims have zone_district_code=NULL because their
+  source document_tables rows had null caption AND null table_number. Claims
+  traceable via source_table_id; zone needs a second derivation pass.
+- Per-zone-dimensional detector mis-classified 7.4.10-G as in-shape. Detector
+  precision improves when per-use detector lands.
+- Parser produced label_path=[] on some tables. Worked around in mapper via
+  row-label-based category fallback. Real fix is upstream in parser.
+- `rule_keys.md` uses outdated review_state and source_class vocabulary;
+  update.
+- `documents.source_snapshot_id` was null on the CS UDC doc (Phase 1 ingest
+  didn't fully wire); manually backfilled. Phase 1 ingest should set it at
+  upload time.
+- `source_snapshots.checksum` is null on the existing CS UDC snapshot;
+  Phase 1 ingest doesn't compute checksum yet.
+
