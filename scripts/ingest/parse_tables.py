@@ -260,8 +260,13 @@ def extract_logical_tables(pdf_path: str) -> list[dict[str, Any]]:
             warnings.append({"code": "no_table_number",
                              "message": "Could not detect a Table X.Y.Z-A header."})
         if header_values is None:
-            warnings.append({"code": "no_header_row",
-                             "message": "Could not detect a header row."})
+            headerless_check = getattr(strategy, "is_intentionally_headerless", None)
+            if headerless_check is not None and headerless_check(first_seg):
+                warnings.append({"code": "headerless_by_design",
+                                 "message": "Transposed key-value table; no column header expected."})
+            else:
+                warnings.append({"code": "no_header_row",
+                                 "message": "Could not detect a header row."})
         if unclassified > 0:
             warnings.append({"code": "unclassified_rows",
                              "message": f"{unclassified} rows could not be classified."})

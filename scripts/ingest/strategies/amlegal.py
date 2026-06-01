@@ -54,6 +54,10 @@ class AmLegalStrategy(GenericStrategy):
             return None
         return super().find_header_row(rows)
 
+    def is_intentionally_headerless(self, rows: list[list]) -> bool:
+        """True when find_header_row returns None by design (transposed KV table)."""
+        return self._is_transposed_kv_table(rows)
+
     @staticmethod
     def _ncols(rows: list[list]) -> int:
         return max((len(r) for r in rows), default=0)
