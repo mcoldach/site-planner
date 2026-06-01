@@ -323,3 +323,69 @@ key column can be NULL.
 - `source_snapshots.checksum` is null on the existing CS UDC snapshot;
   Phase 1 ingest doesn't compute checksum yet.
 
+
+**2026-05-30 (PM)** — Second table shape shipped: **per-zone-matrix** (CS UDC
+7.4.2-A…D). Run inserted the matrix claims (7.4.2-A full: 50; C/D footnote-free
+leaves added on top; 208 claims_built across the doc, claims_failed: 0,
+~133 dimensional skipped idempotent). New scope coverage: zones A and R-4
+appear for the first time.
+
+**2026-05-30 (PM)** — **Detector precedence is load-bearing: matrix BEFORE
+dimensional.** The dimensional detector keys on label_path[0] category
+prefixes (Lot/Setbacks/Height/Other), which the matrix tables ALSO satisfy —
+so dimensional was silently claiming all 4 matrix tables, running them through
+_extract_per_zone_dimensional (which reads cells[0] as the row label; in a
+matrix that's a numeric zone cell), and producing zero claims while looking
+like nothing happened. They were never "unknown" — they were mis-eaten. Matrix
+detector uses a precise headers[0]=="Zone District" signature (present in
+A–D, absent in 7.4.2-E×2/F) and runs first. Classification went 26 dimensional
+→ 22 dimensional + 4 matrix, unknown unchanged at 82.
+
+**2026-05-30 (PM)** — **Shape-scoped mapping namespace** is the standing fix
+for cross-shape label collisions. The same string means opposite things across
+shapes: "maximum" and "single-family attached" are ignore_rows (dividers) in
+dimensional but REAL rules in the matrix. label_mapping.yaml now has a
+top-level per_zone_matrix: block (own categories/rows/composites/ignore_rows),
+selected by ex.shape (stamped on RawExtraction in extract()). Dimensional block
+left byte-identical as the default → 133 dimensional claims regression-verified
+unchanged.
+
+**2026-05-30 (PM)** — **density.residential** added — first new rule_key since
+the ontology froze. From 7.4.2-A "Residential density (maximum)": R-4 8 du/ac
+[footnote 6], R-5 25 du/ac. WATCH: value_kind=number with unit "du/ac" passes
+the CHECK but du/ac is a density, not a length/area. Fine for v1 (§6 defers
+unit normalization) but flag for units-vocab promotion and for Migration B
+compliance (density checks against lot area, not a linear comparison).
+
+**2026-05-30 (PM)** — build.py now merges the §8.8 prose qualifier (split out
+of a polluted unit field by the extractor) WITH footnote markers into notes.
+Previously it built notes from footnotes only, dropping the qualifier. Verified
+on R-1 6 House-General front setback (15 ft + "or average of two adjacent…").
+
+**2026-05-30 (PM)** — §10 coexistence verified concretely. R-1 6 shows two
+source_table_ids per shared rule (matrix 7.4.2-A 3379… + dimensional de4e…):
+lot.width 1+1 (clean agreement, same value), lot.coverage 5+1 (matrix bands vs
+dimensional single value — the granularity divergence), setback.front 1+4.
+Safe because dedup index includes source_table_id. Reviewer adjudicates in the
+future Sources tab; engine-level dedup stays deferred.
+
+**Phase 2 backlog updates:**
+- NEXT SESSION FIRST TASK: footnote-stripping in _normalize_row_label
+  (mapping.py). ~37 of tonight's 53 unmapped rows are footnote-only misses
+  (C/D leaves: "Side (minimum) [4]", "Building height (maximum) [6]", etc.).
+  Shared by both shapes → MUST carry its own dimensional regression check
+  (footnoted dimensional rows would newly map too). Kept separate tonight to
+  preserve the regression canary.
+- Deferred, landing cleanly in unmapped queue: 7.4.2-C build-to range
+  (Front Min/Max — needs a composite keyed on FULL path, never bare "maximum");
+  7.4.2-D "Adjacent to residential" (contextual setback, §10); "District area
+  (minimum)" (new rule_key, district-level not lot-level — decide rule_key).
+- 7.4.2-B deferred BY DESIGN: compound use-class column headers ("R-Flex Low
+  Residential Uses [1]") fail the extractor's simple-zone gate → emits nothing.
+  Decomposing zone + residential/non-residential scope axis is its own session.
+- Overlay-legend-into-notes (7.4.2-A legend: overlay districts supersede):
+  NOT done — needs table-legend threaded onto every RawExtraction. Provenance
+  polish, not correctness. Seam to add next session.
+- Per-use shape (7.4.10-*) still pending — different scope axis (use_class),
+  unused constraint_kind (ratio). The 7.4.10-G dimensional misclassification
+  should resolve when that detector lands.

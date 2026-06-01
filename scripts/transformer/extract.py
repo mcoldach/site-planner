@@ -23,6 +23,7 @@ class RawExtraction:
     zone: str | None = None
     row_index: int = -1
     notes: str | None = None   # qualifier text split out of a polluted unit (§8.8)
+    shape: str = ""            # detected shape; the mapper resolves per-shape
 
 
 _ZONE_RE = re.compile(r"^\s*([^:]+?)\s*:")
@@ -54,10 +55,16 @@ def _split_unit_qualifier(unit: str | None) -> tuple[str | None, str | None]:
 
 def extract(shape: Shape, table_row: dict[str, Any]) -> list[RawExtraction]:
     if shape == Shape.PER_ZONE_DIMENSIONAL:
-        return _extract_per_zone_dimensional(table_row)
-    if shape == Shape.PER_ZONE_MATRIX:
-        return _extract_per_zone_matrix(table_row)
-    return []
+        result = _extract_per_zone_dimensional(table_row)
+    elif shape == Shape.PER_ZONE_MATRIX:
+        result = _extract_per_zone_matrix(table_row)
+    else:
+        result = []
+    # Single assignment point: stamp the shape so the mapper can resolve
+    # against the right vocabulary block.
+    for ex in result:
+        ex.shape = shape.value
+    return result
 
 
 def _extract_per_zone_matrix(table_row: dict[str, Any]) -> list[RawExtraction]:

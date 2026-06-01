@@ -144,3 +144,138 @@ ignore_rows:
   - "corner lot side street, non-residential use"
   - "corner lot side street, residential use"
   - "street-loaded garage"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Per-zone-matrix vocabulary (CS UDC 7.4.2-A…D). Selected when ex.shape ==
+# "per_zone_matrix". Same logical rules as the dimensional block, but the
+# label strings and category vocabulary differ, and some strings the
+# dimensional block IGNORES are real rules here ("maximum", dwelling types).
+#
+# SAFETY NOTE on bare "maximum": it resolves to lot.coverage ONLY because the
+# category gate requires label_path[0] to resolve, and we deliberately do NOT
+# define a "front" category here. So 7.4.2-C's build-to ["Front","Maximum"]
+# fails the gate and unmaps cleanly instead of mis-binding to lot.coverage.
+# When C's build-to range lands (next session), handle Front Min/Max via a
+# composite keyed on the full path — never the bare leaf.
+per_zone_matrix:
+  categories:
+    "lot standards":
+      constraint_kind: scalar_min          # rows override (density -> max)
+    "lot area":
+      constraint_kind: scalar_min
+    "lot coverage":
+      constraint_kind: scalar_max
+    "lots containing only buildings less than 18 ft in height":
+      constraint_kind: scalar_max
+    "setbacks":
+      constraint_kind: scalar_min
+    "height":
+      constraint_kind: scalar_max
+
+  rows:
+    # Density (new rule_key this shape)
+    "residential density (maximum)":
+      rule_key: density.residential
+      constraint_kind: scalar_max
+
+    # Lot area by dwelling type (scope.dwelling_type)
+    "single-family detached":
+      rule_key: lot.area
+      constraint_kind: scalar_min
+      scope: {dwelling_type: single_family_detached}
+    "single-family attached":
+      rule_key: lot.area
+      constraint_kind: scalar_min
+      scope: {dwelling_type: single_family_attached}
+    "two-family (duplex)":
+      rule_key: lot.area
+      constraint_kind: scalar_min
+      scope: {dwelling_type: two_family}
+    "multi-family - one-story structure":
+      rule_key: lot.area
+      constraint_kind: scalar_min
+      scope: {dwelling_type: multifamily_one_story}
+    "multi-family - two-story structure":
+      rule_key: lot.area
+      constraint_kind: scalar_min
+      scope: {dwelling_type: multifamily_two_story}
+    # The parser puts a newline after "three-", so normalization yields
+    # "three- story". Both spellings keyed defensively.
+    "multi-family - three- story structure":
+      rule_key: lot.area
+      constraint_kind: scalar_min
+      scope: {dwelling_type: multifamily_three_story}
+    "multi-family - three-story structure":
+      rule_key: lot.area
+      constraint_kind: scalar_min
+      scope: {dwelling_type: multifamily_three_story}
+    "multi-family - four-story structure":
+      rule_key: lot.area
+      constraint_kind: scalar_min
+      scope: {dwelling_type: multifamily_four_story}
+
+    # Lot dimensions (also cover C/D footnote-free leaves)
+    "lot area (minimum)":
+      rule_key: lot.area
+      constraint_kind: scalar_min
+    "lot width (minimum)":
+      rule_key: lot.width
+      constraint_kind: scalar_min
+
+    # Lot coverage
+    "maximum":
+      rule_key: lot.coverage
+      constraint_kind: scalar_max
+    "lot coverage (maximum)":
+      rule_key: lot.coverage
+      constraint_kind: scalar_max
+    "lots containing any building(s) equal to exceeding 18 ft in height":
+      rule_key: lot.coverage
+      constraint_kind: scalar_max
+      scope: {building_height_condition: gte_18ft}
+    "5,000 - 6,500 sf lot":
+      rule_key: lot.coverage
+      constraint_kind: scalar_max
+      scope: {building_height_condition: lt_18ft, lot_area_condition: 5000_6500_sf}
+    "6,501 - 7,500 sf lot":
+      rule_key: lot.coverage
+      constraint_kind: scalar_max
+      scope: {building_height_condition: lt_18ft, lot_area_condition: 6501_7500_sf}
+    "7,501 - 8,500 sf lot":
+      rule_key: lot.coverage
+      constraint_kind: scalar_max
+      scope: {building_height_condition: lt_18ft, lot_area_condition: 7501_8500_sf}
+    "8,501+ sf lot":
+      rule_key: lot.coverage
+      constraint_kind: scalar_max
+      scope: {building_height_condition: lt_18ft, lot_area_condition: gte_8501_sf}
+
+    # Setbacks
+    "front (minimum)":
+      rule_key: setback.front
+      constraint_kind: scalar_min
+    "house - general (from property line)":
+      rule_key: setback.front
+      constraint_kind: scalar_min
+      scope: {building_element: principal_building}
+    "side (minimum)":
+      rule_key: setback.side
+      constraint_kind: scalar_min
+    "rear (minimum)":
+      rule_key: setback.rear
+      constraint_kind: scalar_min
+    "corner lot - side street (minimum)":
+      rule_key: setback.side_street
+      constraint_kind: scalar_min
+    "front parking setback (minimum)":
+      rule_key: setback.front
+      constraint_kind: scalar_min
+      scope: {building_element: parking}
+
+    # Height (C/D)
+    "building height (maximum)":
+      rule_key: building.height
+      constraint_kind: scalar_max
+
+  composites: {}
+  ignore_rows: []

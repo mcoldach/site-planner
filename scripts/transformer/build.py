@@ -23,11 +23,20 @@ class BuiltClaim:
     notes: str | None
 
 
-def build_claim(ex: RawExtraction, m: MappedClaim) -> BuiltClaim | None:
-    notes: str | None = None
+def _merge_notes(ex: RawExtraction) -> str | None:
+    """Combine the §8.8 qualifier (split out of a polluted unit) with any
+    footnote markers. Either, both, or neither may be present."""
+    parts: list[str] = []
+    if ex.notes:
+        parts.append(ex.notes)
     if ex.footnotes:
         footnote_str = ", ".join(str(f) for f in ex.footnotes)
-        notes = f"Footnote(s): [{footnote_str}]"
+        parts.append(f"Footnote(s): [{footnote_str}]")
+    return "; ".join(parts) if parts else None
+
+
+def build_claim(ex: RawExtraction, m: MappedClaim) -> BuiltClaim | None:
+    notes = _merge_notes(ex)
 
     if ex.parse_status == "numeric":
         unit = ex.unit
