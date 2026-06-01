@@ -389,3 +389,91 @@ future Sources tab; engine-level dedup stays deferred.
 - Per-use shape (7.4.10-*) still pending — different scope axis (use_class),
   unused constraint_kind (ratio). The 7.4.10-G dimensional misclassification
   should resolve when that detector lands.
+
+**2026-05-30 (PM)** — **Multi-polygon schemes (Opener A) DONE.** A Scheme now
+holds multiple footprints. Closes the B1 backlog item; struck from Track B.
+
+---
+
+# PHASE 2 BACKLOG (consolidated 2026-05-30 PM)
+
+_Single ordered queue. Supersedes the scattered Phase 2 items in Open/parked
+above — clean those out next edit. Tracks are parallel; numbering within a
+track is rough work order. Phase 2 is "done" when Track A has shape coverage +
+a Sources tab, and Track B closes the parcel→code→constraints→scheme→BoE loop
+end to end (Compass Phases section)._
+
+## Track A — Claims / transformer (active)
+A1. **[NEXT] Footnote-stripping in `_normalize_row_label`** (mapping.py).
+    Recovers ~37 of the 53 unmapped (C/D footnoted leaves). Shared by both
+    shapes → carries its own dimensional regression check.
+A2. **Per-use shape (7.4.10-*).** New scope axis (use_class), first use of
+    `ratio` constraint_kind. Should also resolve the 7.4.10-G dimensional
+    misclassification. Own session — do NOT pair with A1.
+A3. **Per-table deferrals** (after shapes land, each lands in unmapped now):
+    - 7.4.2-C build-to `range` (Front Min/Max) — composite keyed on FULL
+      label_path, never the bare "maximum" leaf.
+    - 7.4.2-D "Adjacent to residential" — contextual setback (§10).
+    - "District area (minimum)" (C/D) — new rule_key decision; district-level,
+      not lot-level.
+    - 7.4.2-B compound use-class columns — decompose zone + residential/
+      non-residential scope axis. Own session.
+A4. **Overlay-legend-into-notes seam.** Thread table-level legend onto every
+    RawExtraction (7.4.2-A: "overlay districts supersede this table").
+    Provenance polish, not correctness.
+A5. **Sources tab UI** — review + `edit_claim` RPC (required `edit_note`
+    enforced at RPC). Where the approved-claim vs AI-draft legibility line
+    gets designed.
+A6. **Source navigation** — LLM as read-only tool over the Sources tab.
+
+## Track B — End-to-end Phase 2 workflow (the Compass goal)
+B1. **Multi-polygon schemes (Opener A).** [CONFIRM STATUS — carried from
+    Compass open list; recent sessions were all transformer.] Data-model:
+    child `scheme_footprints` vs `MultiPolygon` column; `check_scheme_compliance`
+    per-footprint vs summed coverage; Terra Draw multi-feature save/load.
+B2. **Minimum-viable honest BoE formula set.** First-pass underwrite linked to
+    a Scheme version. Feasibility-grade, not survey-grade.
+B3. **`lookup-parcel` geometry bug.** New-APN lookups resolve jurisdiction +
+    citations but parcel geometry doesn't render (only the 4 seeded parcels
+    were tested). Isolate the geometry path.
+
+## Track C — Jurisdiction pack #2
+C1. **EPC LDC ingest.** Upload Municode PDF, run generic strategy, write
+    `strategies/municode.py` for the diffs. The real test of the strategy
+    registry — and the "two packs from day one" thesis.
+C2. **EPC unincorporated boundary.** `ST_Difference` of county polygon minus
+    union of incorporated municipalities (CS, Fountain, Monument, Manitou
+    Springs, Palmer Lake, Green Mountain Falls, Calhan, Ramah). Expensive to
+    get wrong — breaks governing-authority detection inside incorporated areas.
+
+## Track D — Debts to clear before they compound
+D1. **Migration B (destructive — GATED on shape coverage + proposer).** Update
+    `check_scheme_compliance` to read constraint_kind/value/value_kind/scope;
+    regression-check against existing schemes; drop `value_text`,
+    `value_numeric`, `value_unit`; rename `claims_lookup_v2_idx` →
+    `claims_lookup_idx`. Until then legacy columns stay populated.
+D2. **24 zone_district_code=NULL claims.** Source rows had null caption AND
+    null table_number; traceable via source_table_id; need a second zone
+    derivation pass.
+D3. **rule_keys.md §12 stale vocabulary.** review_state/source_class still
+    reference old enums; align with live schema.
+D4. **`du/ac` unit semantics** (density.residential). value_kind=number passes
+    CHECK but du/ac is a density, not length/area. Flag for units-vocab
+    promotion and Migration B density-vs-lot-area checks.
+D5. **Ingest hardening.** Share the PDF download across parse/embed; pin deps
+    (`requirements.txt`); reuse table detection instead of re-running
+    `find_tables()`; set `source_snapshot_id` + compute `checksum` at upload.
+D6. **Parser refinements.** Real upstream fix for the label_path stack-reset
+    bug (resets on new section header instead of nesting — root cause of the
+    7.4.2-A nesting we work around in the mapper). 54 low-confidence pre-zoning
+    rows correctly flagged, preserved.
+
+## Open questions to resolve within Phase 2
+- Claim-conflict resolution when two authoritative sources disagree
+  (distinct from §10 same-rule coexistence — this is genuine contradiction).
+- Ground-truth set to curate first for testing the constraint extractor.
+- Minimum claim schema that survives Phase 3 citation UX without a refactor.
+
+## Explicitly Phase 3+ (NOT Phase 2 — guard against pull-forward)
+Scheme versioning polish · richer BoE / DCF · citation UX · light copilot ·
+Google 3D Tiles gating granularity · Vercel deploy (no URL to share yet).
