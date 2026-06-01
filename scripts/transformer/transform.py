@@ -57,6 +57,43 @@ def fetch_document_tables(client: Client, document_id: str) -> list[dict[str, An
     return resp.data or []
 
 
+def clear_previous_extraction(
+    client: Client, document_id: str, source_snapshot_id: str
+) -> tuple[int, int]:
+    """Wipe this document's previously-transformed output so a re-run replaces
+    rather than duplicates it (mirrors parse_tables.py's idempotency).
+
+    Only deletes machine-extracted artifacts:
+      - claims for this source_snapshot_id with review_state = 'extracted'.
+        Approved/rejected claims carry human review state and are never touched.
+      - unmapped_table_labels for this document's tables, so the unmapped set is
+        rebuilt from scratch rather than accumulated.
+
+    Returns (claims_cleared, unmapped_cleared).
+    """
+    claims_resp = (client.table("claims")
+                   .delete()
+                   .eq("source_snapshot_id", source_snapshot_id)
+                   .eq("review_state", "extracted")
+                   .execute())
+    claims_cleared = len(claims_resp.data or [])
+
+    ids_resp = (client.table("document_tables")
+                .select("id")
+                .eq("document_id", document_id)
+                .execute())
+    table_ids = [t["id"] for t in (ids_resp.data or [])]
+    unmapped_cleared = 0
+    if table_ids:
+        unmapped_resp = (client.table("unmapped_table_labels")
+                         .delete()
+                         .in_("document_table_id", table_ids)
+                         .execute())
+        unmapped_cleared = len(unmapped_resp.data or [])
+
+    return claims_cleared, unmapped_cleared
+
+
 def log_unmapped(client: Client, document_table_id: str, label_path: list[str]):
     try:
         client.table("unmapped_table_labels").insert({
@@ -103,6 +140,13 @@ def main():
     client = get_client()
     jurisdiction_id, source_snapshot_id = lookup_document_context(client, args.document_id)
     mapper = LabelMapper(HERE / "label_mapping.yaml")
+
+    if not args.dry_run:
+        claims_cleared, unmapped_cleared = clear_previous_extraction(
+            client, args.document_id, source_snapshot_id
+        )
+        print(f"Cleared {claims_cleared} extracted claims and "
+              f"{unmapped_cleared} unmapped labels from prior run")
 
     tables = fetch_document_tables(client, args.document_id)
     print(f"Loaded {len(tables)} document_tables rows")

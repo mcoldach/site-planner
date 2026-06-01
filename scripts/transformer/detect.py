@@ -93,17 +93,17 @@ def _detect_per_zone_matrix(table_row: dict[str, Any]) -> Detection | None:
 def _detect_per_zone_dimensional(table_row: dict[str, Any]) -> Detection | None:
     """Per-zone dimensional table.
 
-    Signature:
-      - headers[0] is the empty/label column
-      - rows have label_path entries from a small known vocabulary
+    K fix: transposed KV header + headerless dimensional detect.
+
+    Signature is label_path category prefixes (Setbacks/Lot/Height/Other), not
+    column headers — headerless 7.2.x tables have headers == [] after ingest.
 
     Robust check: at least 30% of rows have a label_path whose first element
     starts with "Setbacks", "Lot", "Height", or "Other".
     """
-    headers = table_row.get("headers") or []
     rows = table_row.get("rows") or []
 
-    if len(headers) < 2 or len(rows) == 0:
+    if len(rows) == 0:
         return None
 
     expected_category_prefixes = ("Setbacks", "Lot", "Height", "Other")

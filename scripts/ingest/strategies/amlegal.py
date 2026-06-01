@@ -14,10 +14,14 @@ What we observed in CS City Code (the real document):
 """
 from __future__ import annotations
 import re
-from .base import GenericStrategy, TableMeta
+from .base import GenericStrategy, TableMeta, parse_cell
 
 
 _TABLE_NUM_RE = re.compile(r"Table\s+([\d.]+-?[A-Z0-9]{0,3})\s*$", re.IGNORECASE)
+# Short CS UDC zone-district column labels (7.4.2-A matrix headers), not rule names.
+_ZONE_CODE_RE = re.compile(
+    r"^(A|R-E|R-\d|R-\d \d|PUD|OR|MX-[A-Z]|BP|LI|OC|C-\d|M-\d)$"
+)
 
 
 class AmLegalStrategy(GenericStrategy):
@@ -37,3 +41,52 @@ class AmLegalStrategy(GenericStrategy):
                 legend="\n".join(lines[2:]) if len(lines) > 2 else None,
             )
         return TableMeta(None, lines[0], None)
+
+    def find_header_row(self, rows: list[list]) -> tuple[int, list[str]] | None:
+        """K fix: transposed KV header + headerless dimensional detect.
+
+        Per-zone dimensional tables (7.2.2-*, 7.2.3-*, 7.2.4-*) are 3-column
+        key-value rows with no column-header row; GenericStrategy would promote
+        the first data row to headers. Return None so parse_tables keeps col_N
+        names and preserves the first rule row.
+        """
+        if self._is_transposed_kv_table(rows):
+            return None
+        return super().find_header_row(rows)
+
+    @staticmethod
+    def _ncols(rows: list[list]) -> int:
+        return max((len(r) for r in rows), default=0)
+
+    @classmethod
+    def _row_has_zone_code_header_cells(cls, row: list) -> bool:
+        """True when cells[1:] look like a matrix of zone-district column labels."""
+        if len(row) < 3:
+            return False
+        vals = [
+            str(c).strip()
+            for c in row[1:]
+            if isinstance(c, str) and c.strip()
+        ]
+        if len(vals) < 2:
+            return False
+        zone_hits = sum(1 for v in vals if _ZONE_CODE_RE.match(v))
+        return zone_hits >= 2
+
+    @classmethod
+    def _is_transposed_kv_table(cls, rows: list[list]) -> bool:
+        if cls._ncols(rows) != 3:
+            return False
+        if any(cls._row_has_zone_code_header_cells(r) for r in rows):
+            return False
+        good = 0
+        total = 0
+        for r in rows:
+            if len(r) < 3:
+                continue
+            c1 = parse_cell(r[1] if isinstance(r[1], str) else None)
+            c2 = parse_cell(r[2] if isinstance(r[2], str) else None)
+            if c1["parse_status"] in ("non_numeric", "empty") and c2["parse_status"] != "empty":
+                good += 1
+            total += 1
+        return total >= 2 and good >= max(2, total * 0.5)

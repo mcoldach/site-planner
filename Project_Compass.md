@@ -563,3 +563,42 @@ D8. **Row-label footnote provenance.** notes are built from CELL footnotes
 ## Explicitly Phase 3+ (NOT Phase 2 — guard against pull-forward)
 Scheme versioning polish · richer BoE / DCF · citation UX · light copilot ·
 Google 3D Tiles gating granularity · Vercel deploy (no URL to share yet).
+
+- **2026-06-01** — D6 re-diagnosed and SPLIT; "K" shipped. The pinned D6
+  root cause (find_header_row skips a sparse zone header) was WRONG — reading
+  the raw grids showed three distinct table topologies, only one of which has
+  a zone header. Actual bugs: **K** — the 7.2.x tables (7.2.2/7.2.3/7.2.4) are
+  transposed 3-col key-value tables with NO column header; find_header_row ate
+  their first data row. **F** — four titleless fragments (pp.214/217/219/226)
+  orphaned by parse_tables continuation logic that only merges tables that BOTH
+  kept their title (a continuation, by definition, lost its title). K and F are
+  separate fixes; A2 (per-use 7.4.10-*) is a third. Shipped K only this session.
+- **2026-06-01** — K fix = TWO coupled changes, not the "one-line amlegal
+  override" D6 assumed: (1) AmLegalStrategy.find_header_row override returns
+  None for the transposed-KV shape (strategies/amlegal.py); (2)
+  _detect_per_zone_dimensional (transformer/detect.py) dropped its
+  len(headers)>=2 gate — K makes these tables headerless, which would otherwise
+  send them to UNKNOWN and drop them. Both needed or the re-ingest drops the
+  7.2.x corpus.
+- **2026-06-01** — K verified: all 7.2.2/7.2.3/7.2.4 tables now emit
+  independent per-zone claims with own source_table_id (e.g. recovered
+  setback.front=4 rows; per-zone lot.coverage, previously matrix-only).
+  claims_failed=0, dimensional canary unchanged, rejected preserved at 24.
+  Extracted set rebuilt to 244 clean.
+- **2026-06-01** — transform.py was NOT idempotent despite the Compass claiming
+  "safe to re-run." Insert-only + a PARTIAL dedup index
+  (claims_transformer_dedup_idx, WHERE source_table_id IS NOT NULL) meant the
+  re-run double-inserted: the 215 pre-K originals had null source_table_id so
+  the index didn't cover them. FIXED: transform.py now wipes its own
+  machine-extracted artifacts (extracted claims + unmapped labels for the
+  document's source_snapshot) before re-inserting; preserves approved/rejected.
+  "Safe to re-run" is now actually true.
+- **2026-06-01** — KNOWN COSMETIC DEBT from K: parse_tables confidence rule
+  stamps any no_header_row table as low, so the ~25 correctly-headerless 7.2.x
+  tables now read parser_confidence='low' (67 low total). Display-only —
+  nothing reads parser_confidence except the transformer's SELECT (it never
+  branches on it). MUST be cleaned before F, because F's fragment-detection
+  signal was "low-confidence titleless" and K just polluted the low bucket.
+- **2026-06-01** — D2/D7 NOT closed by this re-ingest (correcting the prior
+  "returns via re-ingest after D6+A2" note). K doesn't touch fragmentation; the
+  23 rejected D2 claims and the p219 D7 fragment remain. They close on F.
