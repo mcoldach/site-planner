@@ -100,6 +100,14 @@ remediated.
   Separately, the duplicate-audit surfaced D2 (null-zone claims) as a live
   compliance-correctness risk, not just missing metadata — re-scoped D2
   accordingly. D2 is its own session, not bundled with A2.
+- **2026-06-01** — D2 diagnosed and closed by rejection. The 23 null-zone
+  claims trace to four low-confidence tables where the parser misread the first
+  data row as the header, discarding the zone and misaligning values. Zone
+  unrecoverable; values untrustworthy; some were per-use tables mis-extracted
+  by the dimensional shape. All 23 rejected with provenance notes — NOT
+  re-derived. Re-scoped D6 as the shared upstream root cause (header misread +
+  label_path reset) and linked D7's thousands-separator bug to the same parser.
+  Correct values return on re-ingest after D6 + A2.
 
 ## Open / parked (delete when resolved → log the resolution above)
 
@@ -467,16 +475,23 @@ D1. **Migration B (destructive — GATED on shape coverage + proposer).** Update
     regression-check against existing schemes; drop `value_text`,
     `value_numeric`, `value_unit`; rename `claims_lookup_v2_idx` →
     `claims_lookup_idx`. Until then legacy columns stay populated.
-D2. **zone_district_code=NULL claims (also null table_number) — REVISITED
-    2026-06-01, worse than first logged.** A duplicate-audit (group by table+
-    zone+rule_key+scope) surfaced these as collapsed groups: e.g. building.height
-    with 4 distinct values (35/40/45/80 ft) all null-zone, indistinguishable in
-    the active set; some also have null VALUES (setback.side, setback.rear). A
-    null-zone scalar_max claim either matches no parcel (missing constraint) or
-    all parcels (wrong constraint) at compliance time — a live because-chain
-    break, not just missing metadata. Needs the second zone-derivation pass via
-    source_table_id, AND a decision on the null-value rows (quarantine vs
-    re-derive). Own session — diagnose before prescribing; do NOT bundle with A2.
+D2. **23 null-zone claims — DIAGNOSED + REJECTED 2026-06-01. Root cause:
+    parser header-row misread.** Traced all 23 to four low-confidence
+    document_tables (pp. 214/217/219/226). In each, the parser captured the
+    FIRST DATA ROW as the column header (e.g. headers ["","Residential density
+    (maximum)","8 du/ac [3]"] and ["","Residential uses","1,500 sf per du"]),
+    so the real header row — which carried the zone — was discarded before
+    document_tables was written. Zone is therefore UNRECOVERABLE from the
+    stored data (not in caption, sibling rows, or section_ref). Worse, the
+    header misalignment makes the extracted value/label pairing unreliable, and
+    at least one table (dea9f36a, p219) is a PER-USE table (use axis:
+    residential/non-residential) mis-eaten by the dimensional extractor —
+    source of the phantom scope keys (use_class:non_residential,
+    adjacency:collector_parkway_arterial) seen on those claims. All 23
+    quarantined (review_state='rejected') with provenance notes. Correct values
+    return via re-ingest after the parser fix (D6) + per-use shape (A2) +
+    matrix coverage. DO NOT attempt to re-derive zones onto these — values are
+    not trustworthy.
 D3. **rule_keys.md §12 stale vocabulary.** review_state/source_class still
     reference old enums; align with live schema.
 D4. **`du/ac` unit semantics** (density.residential). value_kind=number passes
@@ -485,10 +500,15 @@ D4. **`du/ac` unit semantics** (density.residential). value_kind=number passes
 D5. **Ingest hardening.** Share the PDF download across parse/embed; pin deps
     (`requirements.txt`); reuse table detection instead of re-running
     `find_tables()`; set `source_snapshot_id` + compute `checksum` at upload.
-D6. **Parser refinements.** Real upstream fix for the label_path stack-reset
-    bug (resets on new section header instead of nesting — root cause of the
-    7.4.2-A nesting we work around in the mapper). 54 low-confidence pre-zoning
-    rows correctly flagged, preserved.
+D6. **Parser header-row misread (UPSTREAM, root cause of D2; likely same
+    family as the label_path stack-reset).** On dense matrix/per-use tables
+    (CS UDC pp. 214–226), the ingest parser treats the first data row as the
+    column-header row, discarding the true header (and the zone it carries) and
+    misaligning every value with its label. Also resets label_path on new
+    section headers instead of nesting. Both corrupt extraction at the source.
+    The 54 low-confidence pre-zoning rows are correctly flagged/preserved.
+    Fixing this is a prerequisite for trustworthy re-ingest of the rejected D2
+    claims. Own session — read the ingest parser before prescribing.
 D7. **Thousands-separator parse artifact — CONTAINED, root cause upstream.**
     2026-06-01: the corrupt 7.4.2-C OR lot.area row (n=5, unit=",00 sf") had a
     correctly-parsed TWIN already live in the same active set (n=5000,
@@ -500,6 +520,9 @@ D7. **Thousands-separator parse artifact — CONTAINED, root cause upstream.**
     ingest parser is next opened: find the thousands-separator split that
     double-emits, and add a build.py guard rejecting any claim whose unit
     begins with a digit/comma. Low priority — single known occurrence, contained.
+    NOTE: the same header-misread (D6) put "1,500 sf per du" into a header cell
+    on p219 — the thousands-separator handling and the header detection are
+    entangled in the same parser; fix together.
 D8. **Row-label footnote provenance.** notes are built from CELL footnotes
     only; row-label markers (`[4]/[5]/[6]`) are dropped where the cell has no
     own footnote (7.4.2-C recovered rows show notes=null). Decide whether
