@@ -427,13 +427,9 @@ A5. **Sources tab UI** — review + `edit_claim` RPC (required `edit_note`
 A6. **Source navigation** — LLM as read-only tool over the Sources tab.
 
 ## Track B — End-to-end Phase 2 workflow (the Compass goal)
-B1. **Multi-polygon schemes (Opener A).** [CONFIRM STATUS — carried from
-    Compass open list; recent sessions were all transformer.] Data-model:
-    child `scheme_footprints` vs `MultiPolygon` column; `check_scheme_compliance`
-    per-footprint vs summed coverage; Terra Draw multi-feature save/load.
-B2. **Minimum-viable honest BoE formula set.** First-pass underwrite linked to
+B1. **Minimum-viable honest BoE formula set.** First-pass underwrite linked to
     a Scheme version. Feasibility-grade, not survey-grade.
-B3. **`lookup-parcel` geometry bug.** New-APN lookups resolve jurisdiction +
+B2. **`lookup-parcel` geometry bug.** New-APN lookups resolve jurisdiction +
     citations but parcel geometry doesn't render (only the 4 seeded parcels
     were tested). Isolate the geometry path.
 
