@@ -60,7 +60,8 @@ def _normalize_category(label: str) -> str:
 
 
 def _normalize_row_label(label: str) -> str:
-    return " ".join(label.lower().split())
+    out = _FOOTNOTE_RE.sub("", label)
+    return " ".join(out.lower().split())
 
 
 class LabelMapper:

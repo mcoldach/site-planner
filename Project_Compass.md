@@ -81,6 +81,19 @@ remediated.
 - **2026-05-27** — Migration CLI works again: `supabase db push` succeeded. The
   Phase 0 migration-history desync appears resolved during Phase 1 auth work.
   _(Confirm with `supabase migration list`; if clean this is settled.)_
+- **2026-06-01** — Footnote-stripping in `_normalize_row_label` (mapping.py):
+  added `_FOOTNOTE_RE.sub`, footnotes only — deliberately NOT
+  `_PAREN_QUALIFIER_RE`, so "(minimum)"/"(maximum)" leaves stay distinct
+  constraint_kinds. Recovered 37 of 53 unmapped (53→16; claims_built 208→245;
+  37 inserted, 0 failed). All 37 are matrix C/D footnoted leaves
+  (setback.side/rear/side_street, building.height, lot.area). Dimensional
+  canary UNCHANGED at 133 — recovery was entirely matrix; the expected
+  dimensional movement did not occur (no footnoted dimensional unmapped leaves
+  existed). 16 survivors are exactly the intended deferrals: build-to Front
+  Min/Max (6), District area minimum (4), Adjacent to residential (3),
+  7.2.2-J stray (1), null-table row (1), 7.4.10-G (1). Provenance verified:
+  notes build from CELL footnotes (7.4.2-D rows carry them); the strip does
+  not touch that path.
 
 ## Open / parked (delete when resolved → log the resolution above)
 
@@ -463,6 +476,14 @@ D6. **Parser refinements.** Real upstream fix for the label_path stack-reset
     bug (resets on new section header instead of nesting — root cause of the
     7.4.2-A nesting we work around in the mapper). 54 low-confidence pre-zoning
     rows correctly flagged, preserved.
+D7. **Thousands-separator value-parse bug.** `7.4.2-C OR lot.area` extracted
+    as `{"n":5,"unit":",00 sf"}` (should be 5,000 sf). Pre-existing
+    extract/build number parser splits on the comma — off-by-1000 risk on any
+    value ≥ 1,000. Audit all numeric claims for comma fragments in `unit`.
+D8. **Row-label footnote provenance.** notes are built from CELL footnotes
+    only; row-label markers (`[4]/[5]/[6]`) are dropped where the cell has no
+    own footnote (7.4.2-C recovered rows show notes=null). Decide whether
+    row-level footnotes need threading into notes (build.py).
 
 ## Open questions to resolve within Phase 2
 - Claim-conflict resolution when two authoritative sources disagree
