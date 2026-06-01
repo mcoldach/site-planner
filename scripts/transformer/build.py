@@ -38,6 +38,30 @@ def _merge_notes(ex: RawExtraction) -> str | None:
 def build_claim(ex: RawExtraction, m: MappedClaim) -> BuiltClaim | None:
     notes = _merge_notes(ex)
 
+    if (m.constraint_kind == "ratio"
+            and ex.parse_status == "numeric"
+            and ex.denominator is not None):
+        # value_kind='ratio' requires numerator + denominator (jsonb numbers)
+        # and denominator_unit (jsonb string) per claim_value_shape_valid.
+        value: dict[str, Any] = {
+            "numerator": ex.value,
+            "denominator": ex.denominator,
+            "denominator_unit": ex.denominator_unit,
+        }
+        if ex.basis is not None:
+            value["basis"] = ex.basis
+        return BuiltClaim(
+            rule_key=m.rule_key,
+            constraint_kind="ratio",
+            value_kind="ratio",
+            value=value,
+            scope=m.scope,
+            zone_district_code=ex.zone,
+            section_ref=ex.section_ref,
+            source_table_id=ex.document_table_id,
+            notes=notes,
+        )
+
     if ex.parse_status == "numeric":
         unit = ex.unit
         if unit in ("%", "percent"):

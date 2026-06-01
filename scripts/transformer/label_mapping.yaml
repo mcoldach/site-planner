@@ -279,3 +279,24 @@ per_zone_matrix:
 
   composites: {}
   ignore_rows: []
+
+# ───────────────────────────────────────────────────────────────────────────
+# Per-use-ratio vocabulary (CS UDC 7.4.10-E parking-by-use). Selected when
+# ex.shape == "per_use_ratio". Rows are keyed on the normalized use-category
+# label (label_path[0]); each emits parking.required as a jurisdiction-wide
+# ratio scoped by use_class. The "Other → As determined by the Manager" row is
+# deliberately absent so it falls through to the non_numeric/prose path.
+per_use_ratio:
+  rows:
+    "applicable residential uses":
+      rule_key: parking.required
+      constraint_kind: ratio
+      scope: {use_class: residential}
+    "civic, public, and institutional uses":
+      rule_key: parking.required
+      constraint_kind: ratio
+      scope: {use_class: civic_institutional}
+    "commercial uses":
+      rule_key: parking.required
+      constraint_kind: ratio
+      scope: {use_class: commercial}

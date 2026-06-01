@@ -24,10 +24,14 @@ class RawExtraction:
     row_index: int = -1
     notes: str | None = None   # qualifier text split out of a polluted unit (§8.8)
     shape: str = ""            # detected shape; the mapper resolves per-shape
+    denominator: float | None = None       # ratio denominator (e.g. 1000 GFA)
+    denominator_unit: str | None = None     # ratio denominator unit (e.g. "sf")
+    basis: str | None = None                 # ratio basis (e.g. "GFA")
 
 
 _ZONE_RE = re.compile(r"^\s*([^:]+?)\s*:")
 _QUALIFIER_MARKERS = (" or ", "average", "whichever")
+_PER_USE_DENOM_RE = re.compile(r"per\s+([\d,]+)\s+(\w+)", re.IGNORECASE)
 
 
 def extract_zone_from_caption(caption: str | None) -> str | None:
@@ -58,6 +62,8 @@ def extract(shape: Shape, table_row: dict[str, Any]) -> list[RawExtraction]:
         result = _extract_per_zone_dimensional(table_row)
     elif shape == Shape.PER_ZONE_MATRIX:
         result = _extract_per_zone_matrix(table_row)
+    elif shape == Shape.PER_USE_RATIO:
+        result = _extract_per_use_ratio(table_row)
     else:
         result = []
     # Single assignment point: stamp the shape so the mapper can resolve
@@ -152,5 +158,86 @@ def _extract_per_zone_dimensional(table_row: dict[str, Any]) -> list[RawExtracti
             zone=zone,
             row_index=idx,
         ))
+
+    return extractions
+
+
+def _extract_per_use_ratio(table_row: dict[str, Any]) -> list[RawExtraction]:
+    """One RawExtraction per use-category row of a parking-ratio-by-use table
+    (CS UDC 7.4.10-E). The denominator + unit + basis are parsed ONCE from
+    headers[1] (e.g. "Min. Spaces per 1,000 GFA"): the numeric value is the
+    per-row numerator, the header supplies the shared denominator. Parking
+    ratios are jurisdiction-wide, so zone is always None (rule_keys.md §8.5).
+
+    Numeric rows carry the ratio fields; a non-numeric row (e.g. "Other → As
+    determined by the Manager") is emitted with parse_status='non_numeric' and
+    NO ratio fields, so build routes it to the existing prose_deferred path.
+    """
+    headers = table_row.get("headers") or []
+    rows = table_row.get("rows") or []
+    table_id = table_row.get("id")
+    table_number = table_row.get("table_number")
+    section_ref = f"UDC §{table_number}" if table_number else "unknown"
+
+    header_text = str(headers[1]) if len(headers) > 1 else ""
+    denominator: float | None = None
+    denominator_unit: str | None = None
+    basis: str | None = None
+    m = _PER_USE_DENOM_RE.search(header_text)
+    if m:
+        denominator = int(m.group(1).replace(",", ""))
+        unit_token = m.group(2)
+        # GFA is an area in square feet (rule_keys.md §8.5):
+        # {"denominator_unit":"sf","basis":"GFA"}.
+        if unit_token.upper() == "GFA":
+            denominator_unit = "sf"
+            basis = "GFA"
+        else:
+            denominator_unit = unit_token
+
+    extractions: list[RawExtraction] = []
+    for idx, row in enumerate(rows):
+        label_path = row.get("label_path") or []
+        if not label_path:
+            continue
+        row_label = str(label_path[0])
+        cells = row.get("cells") or []
+        if not cells:
+            continue
+        cell = cells[0]
+        status = cell.get("parse_status")
+
+        if status == "numeric":
+            extractions.append(RawExtraction(
+                document_table_id=table_id,
+                table_number=table_number,
+                section_ref=section_ref,
+                label_path=label_path,
+                row_label=row_label,
+                value=cell.get("value"),          # the numerator
+                unit=cell.get("unit"),
+                parse_status="numeric",
+                footnotes=cell.get("footnotes") or [],
+                zone=None,
+                row_index=idx,
+                notes=header_text or None,        # provenance: literal header
+                denominator=denominator,
+                denominator_unit=denominator_unit,
+                basis=basis,
+            ))
+        elif status == "non_numeric":
+            extractions.append(RawExtraction(
+                document_table_id=table_id,
+                table_number=table_number,
+                section_ref=section_ref,
+                label_path=label_path,
+                row_label=row_label,
+                value=cell.get("value"),
+                unit=cell.get("unit"),
+                parse_status="non_numeric",
+                footnotes=cell.get("footnotes") or [],
+                zone=None,
+                row_index=idx,
+            ))
 
     return extractions

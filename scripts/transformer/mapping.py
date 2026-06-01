@@ -71,6 +71,10 @@ class LabelMapper:
         self._default = self._load_block(data)
         matrix_data = data.get("per_zone_matrix")
         self._matrix = self._load_block(matrix_data) if matrix_data else None
+        per_use_ratio_data = data.get("per_use_ratio")
+        self._per_use_ratio = (
+            self._load_block(per_use_ratio_data) if per_use_ratio_data else None
+        )
 
     @staticmethod
     def _load_block(data: dict[str, Any] | None) -> _Block:
@@ -85,6 +89,8 @@ class LabelMapper:
     def _block_for(self, shape: str) -> _Block:
         if shape == "per_zone_matrix" and self._matrix is not None:
             return self._matrix
+        if shape == "per_use_ratio" and self._per_use_ratio is not None:
+            return self._per_use_ratio
         return self._default
 
     def map(self, ex: RawExtraction) -> MapOutput:
@@ -97,24 +103,29 @@ class LabelMapper:
         if row_norm in block.ignore_rows:
             return MapOutput(MapResult.IGNORED, [])
 
-        category_cfg = None
-        if ex.label_path:
-            category_norm = _normalize_category(ex.label_path[0])
-            category_cfg = block.categories.get(category_norm)
-        if not category_cfg:
-            # Fallback: row label is self-categorizing.
-            row_lower = ex.row_label.lower()
-            if "lot area" in row_lower or "lot width" in row_lower:
-                category_cfg = (block.categories.get("lot standards")
-                                or block.categories.get("lot area"))
-            elif "lot coverage" in row_lower:
-                category_cfg = block.categories.get("lot coverage")
-            elif row_lower.startswith(("side", "front", "rear", "corner lot")):
-                category_cfg = block.categories.get("setbacks")
-        if not category_cfg:
-            return MapOutput(MapResult.UNMAPPED, [])
-
-        category_kind: str = category_cfg.get("constraint_kind", "scalar_min")
+        # Category gate. Blocks that define categories (default, matrix) require
+        # label_path[0] to resolve to a category before any row maps. A row-only
+        # block (per_use_ratio, no categories) skips the gate — the row label is
+        # the use category itself and carries its own constraint_kind.
+        category_kind: str = "scalar_min"
+        if block.categories:
+            category_cfg = None
+            if ex.label_path:
+                category_norm = _normalize_category(ex.label_path[0])
+                category_cfg = block.categories.get(category_norm)
+            if not category_cfg:
+                # Fallback: row label is self-categorizing.
+                row_lower = ex.row_label.lower()
+                if "lot area" in row_lower or "lot width" in row_lower:
+                    category_cfg = (block.categories.get("lot standards")
+                                    or block.categories.get("lot area"))
+                elif "lot coverage" in row_lower:
+                    category_cfg = block.categories.get("lot coverage")
+                elif row_lower.startswith(("side", "front", "rear", "corner lot")):
+                    category_cfg = block.categories.get("setbacks")
+            if not category_cfg:
+                return MapOutput(MapResult.UNMAPPED, [])
+            category_kind = category_cfg.get("constraint_kind", "scalar_min")
 
         if row_norm in block.composites:
             fn_name = block.composites[row_norm]

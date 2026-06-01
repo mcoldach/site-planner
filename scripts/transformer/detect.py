@@ -22,6 +22,7 @@ import re
 class Shape(str, Enum):
     PER_ZONE_DIMENSIONAL = "per_zone_dimensional"
     PER_ZONE_MATRIX = "per_zone_matrix"
+    PER_USE_RATIO = "per_use_ratio"
     UNKNOWN = "unknown"
 
 
@@ -38,6 +39,8 @@ def _norm(s: Any) -> str:
 
 _FOOTNOTE_RE = re.compile(r"\s*\[\d+\]")
 _SIMPLE_ZONE_RE = re.compile(r"[A-Z0-9][A-Z0-9 \-]*")
+_PER_USE_HEADER_RE = re.compile(r"per\s+[\d,]+\s+\w+", re.IGNORECASE)
+_PER_USE_LABELS = {"use", "use type", "use category"}
 
 
 def _clean_header_zone(s: Any) -> str:
@@ -55,7 +58,8 @@ def _is_simple_zone(z: str) -> bool:
 
 def detect_shape(table_row: dict[str, Any]) -> Detection:
     """Dispatch to detectors. First hit wins; falls through to UNKNOWN."""
-    for detector in (_detect_per_zone_matrix, _detect_per_zone_dimensional):
+    for detector in (_detect_per_zone_matrix, _detect_per_zone_dimensional,
+                     _detect_per_use_ratio):
         result = detector(table_row)
         if result is not None:
             return result
@@ -128,3 +132,26 @@ def _detect_per_zone_dimensional(table_row: dict[str, Any]) -> Detection | None:
         return Detection(Shape.PER_ZONE_DIMENSIONAL, "medium",
                          f"{matching}/{total_with_label} rows match expected categories")
     return None
+
+
+def _detect_per_use_ratio(table_row: dict[str, Any]) -> Detection | None:
+    """Per-use ratio table (CS UDC 7.4.10-E parking-by-use).
+
+    Signature:
+      - headers[0] normalizes to one of "use" / "use type" / "use category"
+      - headers[1] carries a 'per N unit' ratio basis, e.g. "Min. Spaces
+        per 1,000 GFA" (regex r"per\\s+[\\d,]+\\s+\\w+", case-insensitive)
+
+    Registered LAST so it can never poach a matrix/dimensional table — those
+    detectors get first refusal on their own signatures.
+    """
+    headers = table_row.get("headers") or []
+    rows = table_row.get("rows") or []
+    if len(headers) < 2 or len(rows) == 0:
+        return None
+    if _norm(headers[0]) not in _PER_USE_LABELS:
+        return None
+    if not _PER_USE_HEADER_RE.search(str(headers[1] or "")):
+        return None
+    return Detection(Shape.PER_USE_RATIO, "high",
+                     f"headers[0]={headers[0]!r}; ratio basis header {headers[1]!r}")
