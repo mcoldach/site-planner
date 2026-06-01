@@ -108,6 +108,15 @@ remediated.
   re-derived. Re-scoped D6 as the shared upstream root cause (header misread +
   label_path reset) and linked D7's thousands-separator bug to the same parser.
   Correct values return on re-ingest after D6 + A2.
+- **2026-06-01** — D6 root cause pinned to find_header_row
+  (base.py GenericStrategy): the >=2-non-empty-cells header heuristic skips
+  the sparse single-zone header row on dense pp.214-226 tables and promotes
+  the first data row to header — the shared root cause of D2 (lost zone), D7
+  (comma artifact from parse_cell on a value-string header), and the
+  label_path issues. Fix = amlegal structural find_header_row override; needs
+  the clean-table raw rows read first and a full re-ingest+re-transform
+  regression plan (255-claim blast radius). Queued as its own session, coupled
+  with A2.
 
 ## Open / parked (delete when resolved → log the resolution above)
 
@@ -500,15 +509,32 @@ D4. **`du/ac` unit semantics** (density.residential). value_kind=number passes
 D5. **Ingest hardening.** Share the PDF download across parse/embed; pin deps
     (`requirements.txt`); reuse table detection instead of re-running
     `find_tables()`; set `source_snapshot_id` + compute `checksum` at upload.
-D6. **Parser header-row misread (UPSTREAM, root cause of D2; likely same
-    family as the label_path stack-reset).** On dense matrix/per-use tables
-    (CS UDC pp. 214–226), the ingest parser treats the first data row as the
-    column-header row, discarding the true header (and the zone it carries) and
-    misaligning every value with its label. Also resets label_path on new
-    section headers instead of nesting. Both corrupt extraction at the source.
-    The 54 low-confidence pre-zoning rows are correctly flagged/preserved.
-    Fixing this is a prerequisite for trustworthy re-ingest of the rejected D2
-    claims. Own session — read the ingest parser before prescribing.
+D6. **[ROOT CAUSE — diagnosed 2026-06-01, fix is own session] Parser
+    header-row misdetection in find_header_row.** Location:
+    scripts/ingest/strategies/base.py GenericStrategy.find_header_row (amlegal
+    inherits it unchanged). Bug: it picks the first row (after row 0) with >=2
+    non-empty string cells as the header. On CS UDC pp. 214-226 the TRUE header
+    is the single-zone row — sparse (zone label in col 0, rest blank/merged) —
+    so it fails the >=2 test, gets skipped, and the first DATA row (e.g.
+    "Residential density (maximum)" / "8 du/ac [3]"; "Residential uses" /
+    "1,500 sf per du") becomes the header. Consequences: (a) zone lost — the
+    D2 root cause; (b) every cell's column label is a value string, so cell
+    values misalign with labels; (c) parse_cell then runs on header-cell value
+    strings like "1,500 sf per du" — this is ALSO the source of D7's
+    thousands-separator artifact. One root cause, three symptoms (D2 + D7 +
+    label_path nesting). The density heuristic is structurally inverted here:
+    the real header is SPARSER than the data rows, so no threshold tweak fixes
+    it. FIX: amlegal-specific find_header_row override using a structural signal
+    (position / zone-pattern), NOT cell-count. PREREQUISITE before coding:
+    read the raw rows of the CLEAN tables (7.2.2-*, 7.4.2-A) so the new rule
+    correctly identifies the header on BOTH the sparse-zone and dense shapes —
+    do not design it from the broken tables alone. BLAST RADIUS: fix requires
+    re-running parse_tables.py (full re-ingest of document_tables) then the
+    full transformer; ALL claims re-draft — the 23 D2-rejected return as fresh
+    drafts and the 215 extracted regenerate. Needs a regression plan
+    (snapshot claim counts by rule_key/zone before; diff after) BEFORE the
+    re-run. Couple with A2 (per-use shape) so pp.214-226 re-ingest into the
+    right shape. Own session.
 D7. **Thousands-separator parse artifact — CONTAINED, root cause upstream.**
     2026-06-01: the corrupt 7.4.2-C OR lot.area row (n=5, unit=",00 sf") had a
     correctly-parsed TWIN already live in the same active set (n=5000,
