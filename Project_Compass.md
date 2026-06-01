@@ -94,6 +94,12 @@ remediated.
   7.2.2-J stray (1), null-table row (1), 7.4.10-G (1). Provenance verified:
   notes build from CELL footnotes (7.4.2-D rows carry them); the strip does
   not touch that path.
+- **2026-06-01** — D7 closed (contained): OR lot.area corrupt twin quarantined,
+  correct 5000 sf twin already live; root cause is a duplicate-emitting
+  thousands-separator split in the upstream ingest parser, not the transformer.
+  Separately, the duplicate-audit surfaced D2 (null-zone claims) as a live
+  compliance-correctness risk, not just missing metadata — re-scoped D2
+  accordingly. D2 is its own session, not bundled with A2.
 
 ## Open / parked (delete when resolved → log the resolution above)
 
@@ -461,9 +467,16 @@ D1. **Migration B (destructive — GATED on shape coverage + proposer).** Update
     regression-check against existing schemes; drop `value_text`,
     `value_numeric`, `value_unit`; rename `claims_lookup_v2_idx` →
     `claims_lookup_idx`. Until then legacy columns stay populated.
-D2. **24 zone_district_code=NULL claims.** Source rows had null caption AND
-    null table_number; traceable via source_table_id; need a second zone
-    derivation pass.
+D2. **zone_district_code=NULL claims (also null table_number) — REVISITED
+    2026-06-01, worse than first logged.** A duplicate-audit (group by table+
+    zone+rule_key+scope) surfaced these as collapsed groups: e.g. building.height
+    with 4 distinct values (35/40/45/80 ft) all null-zone, indistinguishable in
+    the active set; some also have null VALUES (setback.side, setback.rear). A
+    null-zone scalar_max claim either matches no parcel (missing constraint) or
+    all parcels (wrong constraint) at compliance time — a live because-chain
+    break, not just missing metadata. Needs the second zone-derivation pass via
+    source_table_id, AND a decision on the null-value rows (quarantine vs
+    re-derive). Own session — diagnose before prescribing; do NOT bundle with A2.
 D3. **rule_keys.md §12 stale vocabulary.** review_state/source_class still
     reference old enums; align with live schema.
 D4. **`du/ac` unit semantics** (density.residential). value_kind=number passes
@@ -476,10 +489,17 @@ D6. **Parser refinements.** Real upstream fix for the label_path stack-reset
     bug (resets on new section header instead of nesting — root cause of the
     7.4.2-A nesting we work around in the mapper). 54 low-confidence pre-zoning
     rows correctly flagged, preserved.
-D7. **Thousands-separator value-parse bug.** `7.4.2-C OR lot.area` extracted
-    as `{"n":5,"unit":",00 sf"}` (should be 5,000 sf). Pre-existing
-    extract/build number parser splits on the comma — off-by-1000 risk on any
-    value ≥ 1,000. Audit all numeric claims for comma fragments in `unit`.
+D7. **Thousands-separator parse artifact — CONTAINED, root cause upstream.**
+    2026-06-01: the corrupt 7.4.2-C OR lot.area row (n=5, unit=",00 sf") had a
+    correctly-parsed TWIN already live in the same active set (n=5000,
+    unit="sf"). So the thousands separator caused a duplicate emission upstream
+    in the Phase 1 ingest parser (one cell → two values, one right one wrong),
+    NOT a systemic 1000x corruption. Audit of all 245 claims for the comma
+    fingerprint found exactly one corrupt row; it is QUARANTINED
+    (review_state='rejected'), correct value already present. TODO whenever the
+    ingest parser is next opened: find the thousands-separator split that
+    double-emits, and add a build.py guard rejecting any claim whose unit
+    begins with a digit/comma. Low priority — single known occurrence, contained.
 D8. **Row-label footnote provenance.** notes are built from CELL footnotes
     only; row-label markers (`[4]/[5]/[6]`) are dropped where the cell has no
     own footnote (7.4.2-C recovered rows show notes=null). Decide whether
