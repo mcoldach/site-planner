@@ -137,6 +137,145 @@ def main() -> int:
         return 1
 
 
+# UDC per-zone dimensional tables (7.2.x) run their sections in a fixed order:
+#   Lot/Density/District (0) < Setbacks (1) < Height (2) < Other/Notes (3).
+# A table is "complete" once it reaches Height / Other / Notes; anything after
+# that starts a NEW table, so those sections are terminal for dovetail purposes.
+_SECTION_ORDER = {
+    "lot": 0, "density": 0, "district": 0,
+    "setbacks": 1,
+    "height": 2,
+    "other": 3, "notes": 3,
+}
+_TERMINAL_SECTIONS = {"height", "other", "notes"}
+# The category prefixes that mark a section header's col-0 label.
+_SECTION_PREFIXES = ("setbacks", "height", "other", "density", "district", "lot")
+
+
+def _section_key(label: Any) -> str | None:
+    """Map a col-0 label to its UDC section keyword, or None if it isn't a
+    recognized section header. Matching is case-insensitive on the category
+    prefixes (plus the terminal 'Notes:' row)."""
+    if not isinstance(label, str):
+        return None
+    s = label.strip().lower()
+    if not s:
+        return None
+    if s.startswith("notes"):
+        return "notes"
+    for key in _SECTION_PREFIXES:
+        if s.startswith(key):
+            return key
+    return None
+
+
+def reattach_fragments(raw_tables: list[dict[str, Any]], strategy: Strategy) -> list[dict[str, Any]]:
+    """Phase 1b — fold page-overflow continuation fragments back into their
+    parent table (mutates and returns ``raw_tables``).
+
+    Some 7.2.x per-zone dimensional tables overflow a page break; pdfplumber
+    emits the overflow as a separate titleless 3-column table at the TOP of the
+    next page (the zone/title only appeared on the page where the table began).
+    Those fragments otherwise become standalone titleless rows with no zone.
+
+    A fragment is reattached to the nearest preceding titled 3-column table only
+    when content dovetails by UDC section order — which prevents folding an
+    unrelated fragment into a table that is already complete (ends in
+    Height/Other/Notes)."""
+    headerless_check = getattr(strategy, "is_intentionally_headerless", None)
+
+    def ncols(rows: list[list]) -> int:
+        return max((len(r) for r in rows), default=0)
+
+    def is_candidate(rt: dict[str, Any]) -> bool:
+        # Titleless.
+        if rt["meta"].table_number is not None:
+            return False
+        # Exactly 3 columns.
+        if ncols(rt["rows"]) != 3:
+            return False
+        # Sits at the top of the page (bbox is (x0, top, x1, bottom)).
+        bbox = rt.get("bbox")
+        if not bbox or bbox[1] >= 120:
+            return False
+        # Transposed-KV zoning shape (headerless by design).
+        if headerless_check is None:
+            return False
+        return bool(headerless_check(rt["rows"]))
+
+    def last_section_key(rows: list[list]) -> str | None:
+        found: str | None = None
+        for r in rows:
+            if not r:
+                continue
+            k = _section_key(r[0])
+            if k is not None:
+                found = k
+        return found
+
+    def first_section_key(rows: list[list]) -> str | None:
+        for r in rows:
+            if not r:
+                continue
+            k = _section_key(r[0])
+            if k is not None:
+                return k
+        # No section header: the fragment's first row is a data row under an
+        # implied (continuing) section — use its own col-0 label.
+        if rows and rows[0]:
+            return _section_key(rows[0][0])
+        return None
+
+    to_remove: list[int] = []
+    for i, frag in enumerate(raw_tables):
+        if not is_candidate(frag):
+            continue
+
+        # Parent search: nearest preceding entry, in document order, that has a
+        # table_number AND is exactly 3 columns. That is the ONLY candidate parent.
+        parent: dict[str, Any] | None = None
+        for j in range(i - 1, -1, -1):
+            cand = raw_tables[j]
+            if cand["meta"].table_number is not None and ncols(cand["rows"]) == 3:
+                parent = cand
+                break
+        if parent is None:
+            continue
+
+        # Dovetail gate: accept only if the parent's content continues into the
+        # fragment by UDC section order, and the parent isn't already complete.
+        parent_key = last_section_key(parent["rows"])
+        frag_key = first_section_key(frag["rows"])
+        parent_order = _SECTION_ORDER.get(parent_key) if parent_key else None
+        frag_order = _SECTION_ORDER.get(frag_key) if frag_key else None
+        # A fragment with no recognizable section continues the parent's section.
+        if frag_order is None:
+            frag_order = parent_order
+
+        accept = (
+            parent_key is not None
+            and parent_key not in _TERMINAL_SECTIONS
+            and parent_order is not None
+            and frag_order is not None
+            and frag_order >= parent_order
+        )
+
+        if accept:
+            n = len(frag["rows"])
+            parent["rows"] = parent["rows"] + frag["rows"]
+            to_remove.append(i)
+            print(f"reattached fragment p{frag['page_number']} -> "
+                  f"{parent['meta'].table_number} (p{parent['page_number']}), +{n} rows")
+        else:
+            print(f"orphan kept: titleless frag p{frag['page_number']} "
+                  f"(nearest 3-col parent {parent['meta'].table_number} failed dovetail).")
+
+    if to_remove:
+        drop = set(to_remove)
+        raw_tables[:] = [rt for k, rt in enumerate(raw_tables) if k not in drop]
+    return raw_tables
+
+
 def extract_logical_tables(pdf_path: str) -> list[dict[str, Any]]:
     """Walk every page, extract raw tables, parse via strategy, merge
     continuations. Returns one entry per LOGICAL table (continuations folded
@@ -164,6 +303,9 @@ def extract_logical_tables(pdf_path: str) -> list[dict[str, Any]]:
             if page_idx % 50 == 0 and page_idx > 0:
                 print(f"   ... page {page_num}/{len(pdf.pages)}, raw tables: {len(raw_tables)}",
                       file=sys.stderr)
+
+    # Phase 1b: fold page-overflow continuation fragments into their parent.
+    reattach_fragments(raw_tables, strategy)
 
     # Phase 2: merge continuations.
     logical: list[dict[str, Any]] = []
