@@ -169,6 +169,24 @@ def _section_key(label: Any) -> str | None:
     return None
 
 
+def _is_titled_husk(rt: dict[str, Any]) -> bool:
+    """A titled table pdfplumber emitted with no body — just its title block,
+    because a page break split the title onto the prior page. Identified by:
+    has a table_number, but every row is title-only (no recognized section
+    header and no populated cell beyond col 0)."""
+    if rt["meta"].table_number is None:
+        return False
+    rows = rt["rows"]
+    if not rows:
+        return True
+    for r in rows:
+        if _section_key(r[0] if r else None) is not None:
+            return False  # a real section header → it has a body
+        if any((c is not None and str(c).strip()) for c in r[1:]):
+            return False  # a populated data cell → it has a body
+    return True
+
+
 def reattach_fragments(raw_tables: list[dict[str, Any]], strategy: Strategy) -> list[dict[str, Any]]:
     """Phase 1b — fold page-overflow continuation fragments back into their
     parent table (mutates and returns ``raw_tables``).
@@ -229,6 +247,18 @@ def reattach_fragments(raw_tables: list[dict[str, Any]], strategy: Strategy) -> 
     to_remove: list[int] = []
     for i, frag in enumerate(raw_tables):
         if not is_candidate(frag):
+            continue
+
+        # Husk-reunification: if the immediately-preceding table is a body-less
+        # titled husk, this fragment is its body. Reunify and skip the dovetail
+        # search. (A real, bodied parent is never a husk, so this cannot poach
+        # the page-overflow dovetail cases.)
+        prev = raw_tables[i - 1] if i > 0 else None
+        if prev is not None and _is_titled_husk(prev):
+            prev["rows"] = frag["rows"]   # husk adopts the body; its title rows are already in meta
+            to_remove.append(i)
+            print(f"reunified husk {prev['meta'].table_number} (p{prev['page_number']}) "
+                  f"<- body p{frag['page_number']}, {len(frag['rows'])} rows")
             continue
 
         # Parent search: nearest preceding entry, in document order, that has a

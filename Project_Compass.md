@@ -681,10 +681,12 @@ Google 3D Tiles gating granularity · Vercel deploy (no URL to share yet).
   geometry bug, multi-parcel assemblage, B1 minimum BoE) is next-track, started
   only after Track A closes.
 - **2026-06-01** — TRACK A FINISH QUEUE (next session, in order):
-  1. p217 R-4 fragment — 7.2.2-F renders as 1-col in pdfplumber (table-DETECTION
-     bug, not fragmentation). Fix is a table_settings/find_tables change so R-4
-     extracts as a real 3-col table; F's reattachment then folds its overflow
-     like the other three. Closes the last open D2 fragment.
+  1. p217 R-4 fragment — title↔body page-split (NOT a 1-col detection bug; see
+     2026-06-02 correction). 7.2.2-F (p216) extracts as a correct title-only
+     1-col husk; R-4's body is a clean 3-col fragment on p217. Fix is a
+     husk-reunification branch in reattach_fragments — fold a titleless 3-col
+     body fragment onto an immediately-prior body-less titled husk — NOT a
+     find_tables/table_settings change. Closes the last open D2 fragment.
   2. A2-extend — 7.4.10-A (parking per DU + conditional bands, needs band
      expansion per rule_keys §8.7) and 7.4.10-G (loading, prose -> prose_deferred
      not ratio). Builds on the proven A2-core ratio path.
@@ -694,3 +696,30 @@ Google 3D Tiles gating granularity · Vercel deploy (no URL to share yet).
   Discipline reminder for all three: diagnose against the real file/data BEFORE
   prescribing (this session's D6 was misdiagnosed in the Compass and only the
   read-first discipline caught it). transform.py is now idempotent; re-runs safe.
+
+- **2026-06-02** — CORRECTION (supersedes the 2026-06-01 "7.2.2-F renders as a
+  1-column pdfplumber mis-parse" NEW DEBT entry and its table-DETECTION framing):
+  the p217 R-4 problem is a **title↔body page-split, not a 1-col detection bug**.
+  7.2.2-F on p216 extracts CORRECTLY — as a title-only 1-col husk (the zone
+  title/header sits alone on p216 with no body rows). R-4's body is a **clean
+  3-col fragment on p217**. So there is no mis-parse to fix in find_tables/
+  table_settings; both pieces extract exactly as the PDF lays them out. The
+  real fix is a **husk-reunification branch in reattach_fragments**: fold a
+  titleless 3-col body fragment onto an immediately-prior body-less titled husk
+  (distinct from F's overflow case, which folds a titleless fragment onto a
+  prior table that already has a body). The earlier "1-col mis-parse" mechanism
+  was wrong; the dovetail gate still correctly orphans the p217 rows until this
+  reunification branch lands — no wrong-zone leakage in the interim.
+
+- **2026-06-01** — Step 1 / p217 R-4 SHIPPED. Prior Compass diagnosis was WRONG:
+  NOT a 1-col find_tables mis-parse. 7.2.2-F (p216) is a correct title-only husk;
+  R-4's body is a clean 3-col fragment on p217 that already extracted (zoneless).
+  Real fix = husk-reunification branch in reattach_fragments (_is_titled_husk
+  helper + a pre-dovetail branch: a body-less titled husk adopts the immediately-
+  following titleless 3-col body). Metadata-only — no table_settings/find_tables
+  change, no strategy-file change; Phase 3 processes the body from the identical
+  row list. Verified: R-4 10->21, null-zone extracted 14->3 (3 remaining are
+  parking.required, jurisdiction-wide by design per rule_keys §8.5), approved 16
+  / rejected 24 untouched, claims_failed 0. D2 NOW FULLY CLOSED — all four
+  fragments (p214/p217/p219/p226) resolved; p217 via husk-reunification, not the
+  misdiagnosed detection fix. TRACK A QUEUE: strike item 1.
