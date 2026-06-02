@@ -300,3 +300,18 @@ per_use_ratio:
       rule_key: parking.required
       constraint_kind: ratio
       scope: {use_class: commercial}
+
+# ───────────────────────────────────────────────────────────────────────────
+# Per-use-loading vocabulary (CS UDC 7.4.10-G off-street loading). Selected
+# when ex.shape == "per_use_loading". Rows are keyed on the normalized
+# use-category label (label_path[0]).
+per_use_loading:
+  rows:
+    "uses in the eating, drinking, and lodging; office; and retail sales and services categories":
+      rule_key: parking.required
+      constraint_kind: ratio
+      scope: {building_element: loading, use_class: eating_drinking_lodging_office_retail}
+    "other nonresidential uses":
+      rule_key: parking.required
+      constraint_kind: ratio
+      scope: {building_element: loading, use_class: other_nonresidential}

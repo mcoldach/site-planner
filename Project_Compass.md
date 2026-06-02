@@ -723,3 +723,26 @@ Google 3D Tiles gating granularity · Vercel deploy (no URL to share yet).
   / rejected 24 untouched, claims_failed 0. D2 NOW FULLY CLOSED — all four
   fragments (p214/p217/p219/p226) resolved; p217 via husk-reunification, not the
   misdiagnosed detection fix. TRACK A QUEUE: strike item 1.
+
+- **2026-06-02** — Step 2 / A2-extend SHIPPED (7.4.10-G loading only; 7.4.10-A
+  deferred to next session by decision). Compass framing was wrong on 3 counts:
+  (1) 7.4.10-G is a checkable RATIO (1 space / 50,000 sf GFA), not prose_deferred;
+  (2) it needed a NEW extractor (per-cell denominator), not an A2-core tweak —
+  A2-core parses denominator from headers[1], but 7.4.10-G is headerless-by-design
+  with the denominator in the cell; (3) the real blocker was detector PRECEDENCE:
+  _detect_per_zone_dimensional claimed it first (label_path prefixes cleared the
+  30% threshold) and silently mis-extracted. New shape per_use_loading: Shape +
+  _detect_loading_ratio (keys on a "required loading spaces" CELL, not headers,
+  since headers=[]) registered BEFORE dimensional; parse_loading_cell pure fn
+  (one dialect: "[Minimum:] N space / M unit [GFA]") w/ inline self-check;
+  _extract_loading_ratio (ratio from col_1, size spec -> notes from col_2 per
+  §8.8); per_use_loading YAML block (2 rows -> parking.required, building_element:
+  loading, use_class). rule_key DECISION: loading rides parking.required +
+  scope.building_element=loading, NOT a new loading.required key (rule_keys §4/§7
+  — same rule family, building_element is a documented scope axis). build.py
+  unchanged (scope is opaque pass-through; CHECK validates value shape only).
+  Verified: 2 loading claims, per_zone_dimensional 21->20 (no longer mis-eats G),
+  null-zone 3->5 (jurisdiction-wide by design), rows_unmapped 25->23, approved 16
+  / rejected 24 untouched, claims_failed 0. Detector-precedence trap is the same
+  one the matrix detector hit on 2026-05-30 — specific signatures MUST precede the
+  dimensional label_path heuristic.

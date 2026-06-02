@@ -23,6 +23,7 @@ class Shape(str, Enum):
     PER_ZONE_DIMENSIONAL = "per_zone_dimensional"
     PER_ZONE_MATRIX = "per_zone_matrix"
     PER_USE_RATIO = "per_use_ratio"
+    PER_USE_LOADING = "per_use_loading"
     UNKNOWN = "unknown"
 
 
@@ -58,8 +59,10 @@ def _is_simple_zone(z: str) -> bool:
 
 def detect_shape(table_row: dict[str, Any]) -> Detection:
     """Dispatch to detectors. First hit wins; falls through to UNKNOWN."""
-    for detector in (_detect_per_zone_matrix, _detect_per_zone_dimensional,
-                     _detect_per_use_ratio):
+    # Loading's precise cell signature must precede dimensional's broad
+    # label_path heuristic, mirroring matrix-before-dimensional precedence.
+    for detector in (_detect_per_zone_matrix, _detect_per_use_ratio,
+                     _detect_loading_ratio, _detect_per_zone_dimensional):
         result = detector(table_row)
         if result is not None:
             return result
@@ -155,3 +158,21 @@ def _detect_per_use_ratio(table_row: dict[str, Any]) -> Detection | None:
         return None
     return Detection(Shape.PER_USE_RATIO, "high",
                      f"headers[0]={headers[0]!r}; ratio basis header {headers[1]!r}")
+
+
+def _detect_loading_ratio(table_row: dict[str, Any]) -> Detection | None:
+    """Per-use loading ratio table (CS UDC 7.4.10-G off-street loading).
+
+    Signature:
+      - any cell value/raw_text normalizes to "required loading spaces"
+
+    Registered after the existing detectors so matrix, dimensional, and
+    per-use-ratio shapes keep first refusal on their signatures.
+    """
+    for row in table_row.get("rows") or []:
+        for cell in row.get("cells") or []:
+            if (_norm(cell.get("value")) == "required loading spaces" or
+                    _norm(cell.get("raw_text")) == "required loading spaces"):
+                return Detection(Shape.PER_USE_LOADING, "high",
+                                 "cell 'Required Loading Spaces' present")
+    return None

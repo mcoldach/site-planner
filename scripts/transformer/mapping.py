@@ -75,6 +75,10 @@ class LabelMapper:
         self._per_use_ratio = (
             self._load_block(per_use_ratio_data) if per_use_ratio_data else None
         )
+        per_use_loading_data = data.get("per_use_loading")
+        self._per_use_loading = (
+            self._load_block(per_use_loading_data) if per_use_loading_data else None
+        )
 
     @staticmethod
     def _load_block(data: dict[str, Any] | None) -> _Block:
@@ -91,6 +95,8 @@ class LabelMapper:
             return self._matrix
         if shape == "per_use_ratio" and self._per_use_ratio is not None:
             return self._per_use_ratio
+        if shape == "per_use_loading" and self._per_use_loading is not None:
+            return self._per_use_loading
         return self._default
 
     def map(self, ex: RawExtraction) -> MapOutput:
