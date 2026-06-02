@@ -602,3 +602,95 @@ Google 3D Tiles gating granularity · Vercel deploy (no URL to share yet).
 - **2026-06-01** — D2/D7 NOT closed by this re-ingest (correcting the prior
   "returns via re-ingest after D6+A2" note). K doesn't touch fragmentation; the
   23 rejected D2 claims and the p219 D7 fragment remain. They close on F.
+
+- **2026-06-01** — F shipped: page-overflow fragment reattachment. Four
+  titleless 3-col fragments were page-top continuations of tables that began on
+  the prior page; pdfplumber emitted the overflow as a separate titleless table
+  (title/zone only on the start page). New reattach_fragments pass (parse_tables
+  Phase 1b) folds a fragment into the nearest PRIOR titled 3-col table when
+  content dovetails by UDC section order (Lot/Density/District < Setbacks 
+  Height < Other/Notes); a parent ending in a terminal section (Height/Notes/
+  Other) is rejected (table already complete). Reattached: p214→7.2.2-A (zone A),
+  p219→7.2.2-I (R-Flex Medium), p226→7.2.4-C (GI). Logical tables 108→105.
+- **2026-06-01** — D2 CLOSED for 3 of 4 fragments; D7 CLOSED. p214/219/226 now
+  produce correctly-zoned extracted claims (net-new — parents were 0-row stubs;
+  the fragment WAS the table body). The 24 rejected D2 originals persist as audit
+  history with correct twins now alongside. D7's "1,500 sf per du" artifact was
+  the p219 fragment — folded into 7.2.2-I, extracted clean. claims_failed=0,
+  review state intact (extracted 246 / approved 16 / rejected 24).
+- **2026-06-01** — NEW DEBT (was D2's 4th fragment): **7.2.2-F (R-4) renders as
+  a 1-column pdfplumber mis-parse.** The p217 fragment is R-4's actual body, but
+  its true parent is the 1-col husk, not a valid 3-col reattach target — so the
+  dovetail gate correctly leaves it ORPHANED (refusing to splice R-4 rows onto
+  the backward-nearest R-2 table 7.2.2-E). R-4's claims stay zoneless/unmapped.
+  Fix is upstream: a table_settings/find_tables change so 7.2.2-F extracts as a
+  real 3-col table, after which its overflow reattaches like the others. NOT a
+  fragmentation bug — a table-detection bug. Separate session.
+- **2026-06-01** — F safety proof: no wrong-zone leakage. All section_ref=
+  'unknown' extracted claims remain zone=null (incl. the p217 R-4 rows). The
+  dovetail gate prevented the R-2/R-4 corruption it was designed to prevent.
+
+- **2026-06-01** — A2-core shipped: first ratio value_kind/constraint_kind end
+  to end. New Shape.PER_USE_RATIO detector (detect.py, registered LAST so it
+  can't poach matrix/dimensional), _extract_per_use_ratio (extract.py; parses
+  denominator+unit from the column header once — "Min. Spaces per 1,000 GFA" →
+  denominator=1000, denominator_unit="sf", basis="GFA"; numerator from cell),
+  a ratio branch in build_claim (build.py, gated on constraint_kind=ratio AND
+  numeric AND denominator present), per_use_ratio block in label_mapping.yaml,
+  and a row-only-block fix in mapping.py (_block_for gates on categories only
+  when the block defines them). Scoped to Table 7.4.10-E ONLY.
+- **2026-06-01** — A2-core verified: 3 parking.required ratio claims
+  (residential / civic_institutional / commercial), value
+  {"numerator":<n>,"denominator":1000,"denominator_unit":"sf","basis":"GFA"},
+  scope use_class, zone NULL (jurisdiction-wide per rule_keys §8.5),
+  §7.4.10-E. claims_failed=0 — first live exercise of the
+  claim_value_shape_valid CHECK on a ratio; build.py JSON matched exactly.
+  The "Other / As determined by the Manager" row correctly logs to unmapped
+  (administrative discretion = absence of a constraint, NOT a prose_deferred
+  claim — deliberately no YAML row for it).
+- **2026-06-01** — 7.4.10 family RE-SCOPED (the old "A2 = per-use shape for
+  7.4.10-*" conflated a section number with a table shape; the 8 tables are 8
+  different shapes). A2-EXTEND (queued): 7.4.10-A (parking per DU + conditional
+  bands — needs band expansion per rule_keys §8.7), 7.4.10-G (loading, prose —
+  likely prose_deferred not ratio). OUT of A2 entirely (reference tables, not
+  feasibility constraints, likely never claims): 7.4.10-B (bike % matrix),
+  7.4.10-C (accessible-space brackets), 7.4.10-D (accessible dimensions),
+  7.4.10-F (stall geometry), 7.4.10-H (stacking lanes). Principle: claim the
+  ratios that drive site capacity; leave construction-detail reference parsed
+  but unclaimed.
+- **2026-06-01** — NOTE for before Migration B: migration filename collision
+  observed — 20260522223445_rule_keys_ontology.sql is the SUPERSEDED early
+  vocabulary table (old grammar: setback.front.min etc.); the real four-column
+  ontology + claim_value_shape_valid CHECK is 20260530120000_rule_keys_
+  ontology_v1.sql. Not a desync, but the Phase-1 "run supabase migration list
+  to confirm" caveat was never actually closed — do it before Migration B,
+  which is gated on trustworthy migration history.
+
+- **2026-06-01** — HORIZON RECONCILED against repo (Compass had drifted):
+  * Multi-POLYGON schemes (multiple footprints per scheme) = DONE (5-28
+    scheme_footprints_cutover). Not open.
+  * Multi-PARCEL assemblage (multiple parcels per site) = schema-ready but
+    deferred. site_parcels join table + ST_Union plumbing exist; consumers
+    (check_compliance_via_site, projects_geojson_view) hardcode "V1
+    assemblage-of-one" via `limit 1`. The migrations call it "a data op, not a
+    migration" — lifting the limit-1 guards + a >1-parcel association path is
+    the remaining work. Contained, no schema change. (Track B.)
+  These were conflated as one stale "multi-polygon schemes" horizon line.
+- **2026-06-01** — DECISION: finish Track A before switching to Track B. Track
+  A remaining = three small tracked items (below). Track B (B2 lookup-parcel
+  geometry bug, multi-parcel assemblage, B1 minimum BoE) is next-track, started
+  only after Track A closes.
+- **2026-06-01** — TRACK A FINISH QUEUE (next session, in order):
+  1. p217 R-4 fragment — 7.2.2-F renders as 1-col in pdfplumber (table-DETECTION
+     bug, not fragmentation). Fix is a table_settings/find_tables change so R-4
+     extracts as a real 3-col table; F's reattachment then folds its overflow
+     like the other three. Closes the last open D2 fragment.
+  2. A2-extend — 7.4.10-A (parking per DU + conditional bands, needs band
+     expansion per rule_keys §8.7) and 7.4.10-G (loading, prose -> prose_deferred
+     not ratio). Builds on the proven A2-core ratio path.
+  3. A3 deferrals (the unmapped set) — District-area-minimum (new district-level
+     rule_key), Adjacent-to-residential (§10 contextual setback scope), build-to
+     Front Min/Max (7.4.2-C composite). Each a defined mapping decision.
+  Discipline reminder for all three: diagnose against the real file/data BEFORE
+  prescribing (this session's D6 was misdiagnosed in the Compass and only the
+  read-first discipline caught it). transform.py is now idempotent; re-runs safe.
