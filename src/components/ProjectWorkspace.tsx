@@ -1,4 +1,4 @@
-import { area } from '@turf/turf'
+import { area } from '@turf/area'
 import { ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ComplianceResults, ResultRow, aggregateStatus } from './ComplianceResults'

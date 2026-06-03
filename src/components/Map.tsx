@@ -1,6 +1,6 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import maplibregl from 'maplibre-gl';
-import { bbox } from '@turf/turf';
+import { bbox } from '@turf/bbox';
 import type { FeatureCollection } from 'geojson';
 import {
   TerraDraw,
@@ -8,7 +8,7 @@ import {
   TerraDrawSelectMode,
 } from 'terra-draw';
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
-import { fetchAllParcels, fetchProjects } from '../lib/data';
+import { fetchProjects } from '../lib/data';
 import { getCssToken } from '../lib/css-tokens';
 import type {
   DrawnFootprint,
@@ -180,15 +180,12 @@ function collectDrawnFootprints(draw: TerraDraw): DrawnFootprint[] {
 }
 
 type MapProps = {
+  parcels: Parcel[];
   mode: 'projects' | 'parcels';
   selectedParcelId: string | null;
   onParcelClick: (parcelId: string) => void;
   onProjectClick: (projectId: string) => void;
   refreshProjectsToken: number;
-  // Bumped by the parent after a parcels refetch (e.g. a lookup inserted
-  // a new parcel). Drives the post-mount effect that re-syncs the
-  // 'parcels' GeoJSON source. Mount-time loading still happens in onLoad.
-  refreshParcelsToken: number;
   drawMode: boolean;
   // Imperative arm signal: a monotonic counter the parent bumps to ask
   // Terra Draw to (re-)enter polygon mode. Required because the finish
@@ -246,12 +243,12 @@ type MapProps = {
 };
 
 export function Map({
+  parcels,
   mode,
   selectedParcelId,
   onParcelClick,
   onProjectClick,
   refreshProjectsToken,
-  refreshParcelsToken,
   drawMode,
   drawArmToken,
   onFootprintsChanged,
@@ -277,6 +274,8 @@ export function Map({
 }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const parcelsRef = useRef(parcels);
+  parcelsRef.current = parcels;
   const parcelsGeojsonRef = useRef<FeatureCollection | null>(null);
   const parcelsBoundsRef = useRef<[[number, number], [number, number]] | null>(
     null,
@@ -384,10 +383,7 @@ export function Map({
     const onLoad = () => {
       void (async () => {
         try {
-          const parcels = await fetchAllParcels();
-          if (cancelled) return;
-
-          const geojson = parcelsToFeatureCollection(parcels);
+          const geojson = parcelsToFeatureCollection(parcelsRef.current);
           parcelsGeojsonRef.current = geojson;
 
           map.addSource('parcels', {
@@ -619,7 +615,6 @@ export function Map({
           // event's originalEvent.
           map.on('click', 'saved-scheme-fill', (e) => {
             const id = e.features?.[0]?.properties?.id;
-            console.log('[saved-scheme click] id=', id, 'typeof=', typeof id, 'features=', e.features?.length);
             if (typeof id === 'string') {
               onToggleSavedFootprintIdRef.current(id);
               // Mark this DOM event so the generic background click handler
@@ -666,7 +661,7 @@ export function Map({
 
           layersReadyRef.current = true;
 
-          if (parcels.length > 0) {
+          if (parcelsRef.current.length > 0) {
             const [west, south, east, north] = bbox(geojson);
             parcelsBoundsRef.current = [
               [west, south],
@@ -1140,67 +1135,53 @@ export function Map({
     };
   }, [refreshProjectsToken]);
 
-  // Post-mount parcels refresh. Mirrors the projects effect above: when the
-  // parent bumps refreshParcelsToken (a lookup inserted a new parcel), re-
-  // fetch and push fresh data into the existing 'parcels' source so the new
-  // parcel becomes visible without a full reload. Skips the mount bump
-  // (token === 0) because onLoad already performs the boot-time load.
+  // Sync the parcels prop into the map's GeoJSON source. Fires on every
+  // parcels update (initial load + post-lookup refresh). Replaces the old
+  // refreshParcelsToken fetch — the parent owns the fetch now; Map just
+  // consumes the data.
   useEffect(() => {
-    if (refreshParcelsToken === 0) return;
     const map = mapRef.current;
-    if (!map || !layersReadyRef.current || !map.getSource('parcels')) return;
+    if (!map || !layersReadyRef.current) return;
+    const source = map.getSource('parcels') as
+      | maplibregl.GeoJSONSource
+      | undefined;
+    if (!source) return;
 
-    let cancelled = false;
-    void (async () => {
-      try {
-        const parcels = await fetchAllParcels();
-        if (cancelled) return;
+    const geojson = parcelsToFeatureCollection(parcels);
+    parcelsGeojsonRef.current = geojson;
+    source.setData(geojson);
 
-        const geojson = parcelsToFeatureCollection(parcels);
-        parcelsGeojsonRef.current = geojson;
+    const hadBounds = parcelsBoundsRef.current !== null;
+    if (parcels.length > 0) {
+      const [west, south, east, north] = bbox(geojson);
+      parcelsBoundsRef.current = [
+        [west, south],
+        [east, north],
+      ];
+    } else {
+      parcelsBoundsRef.current = null;
+    }
 
-        const source = map.getSource('parcels') as
-          | maplibregl.GeoJSONSource
-          | undefined;
-        source?.setData(geojson);
+    // Initial fit: when parcels first arrive (bounds was null, now set),
+    // zoom the map to show them — unless a parcel is already selected.
+    if (!hadBounds && parcelsBoundsRef.current && !selectedParcelIdRef.current) {
+      map.fitBounds(parcelsBoundsRef.current, { padding: 50 });
+    }
 
-        if (parcels.length > 0) {
-          const [west, south, east, north] = bbox(geojson);
-          parcelsBoundsRef.current = [
-            [west, south],
-            [east, north],
-          ];
-        } else {
-          parcelsBoundsRef.current = null;
-        }
-
-        // Catch-up fly-to + highlight. The selectedParcelId effect may have
-        // already run against stale parcel data (before this refetch landed
-        // the just-looked-up parcel), so its parcelBounds() returned null and
-        // no fly-to happened. Now that parcelsGeojsonRef holds the fresh set
-        // that includes the new parcel, re-apply the current selection so the
-        // map flies to and highlights it. Modeled on onLoad's initial-
-        // selection block. The normal selectedParcelId effect still handles
-        // plain parcel switching; this only covers the async-refresh race.
-        if (selectedParcelIdRef.current) {
-          applySelection(map, selectedParcelIdRef.current, {
-            accentWash: getCssToken('--color-accent-wash'),
-            graphite: getCssToken('--color-graphite'),
-            accent: getCssToken('--color-accent'),
-            geojson,
-            parcelsBounds: parcelsBoundsRef.current,
-            pulseTimeoutRef,
-          });
-        }
-      } catch {
-        // Keep the existing layer data; the next refresh attempt will retry.
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshParcelsToken]);
+    // Catch-up fly-to + highlight for the async race: the selectedParcelId
+    // effect may have run against stale data before this update landed the
+    // just-looked-up parcel, so re-apply the current selection.
+    if (selectedParcelIdRef.current) {
+      applySelection(map, selectedParcelIdRef.current, {
+        accentWash: getCssToken('--color-accent-wash'),
+        graphite: getCssToken('--color-graphite'),
+        accent: getCssToken('--color-accent'),
+        geojson,
+        parcelsBounds: parcelsBoundsRef.current,
+        pulseTimeoutRef,
+      });
+    }
+  }, [parcels]);
 
   return (
     <div

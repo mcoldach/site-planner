@@ -24,11 +24,6 @@ function App() {
   const [allParcels, setAllParcels] = useState<Parcel[]>([])
   const [isProjectModalOpen, setProjectModalOpen] = useState(false)
   const [projectsToken, setProjectsToken] = useState(0)
-  // Bumped after every parcels refetch so Map re-syncs its 'parcels'
-  // GeoJSON source post-mount. Without this, a parcel inserted by a
-  // lookup lands in the DB and in allParcels but never reaches the map's
-  // source, so the new parcel stays invisible until a full reload.
-  const [refreshParcelsToken, setRefreshParcelsToken] = useState(0)
   // Sources mode state. Mirrors the Projects pattern: a modal toggle, a
   // refresh token bumped by the modal on success so the list refetches, and
   // a lifted "current jurisdiction" so the modal knows where the upload
@@ -99,7 +94,6 @@ function App() {
     try {
       const parcels = await fetchAllParcels()
       setAllParcels(parcels)
-      setRefreshParcelsToken((n) => n + 1)
     } catch {
       setAllParcels([])
     }
@@ -257,12 +251,12 @@ function App() {
           <>
             <div className="relative min-h-0 min-w-0 flex-1">
               <Map
+                parcels={allParcels}
                 mode={mode}
                 selectedParcelId={selectedParcelId}
                 onParcelClick={setSelectedParcelId}
                 onProjectClick={setSelectedProjectId}
                 refreshProjectsToken={projectsToken}
-                refreshParcelsToken={refreshParcelsToken}
                 drawMode={drawMode}
                 drawArmToken={drawArmToken}
                 onFootprintsChanged={handleFootprintsChanged}
@@ -289,7 +283,6 @@ function App() {
               <Sidebar
                 key={selectedParcelId ?? 'empty'}
                 selectedParcelId={selectedParcelId}
-                allParcels={allParcels}
               />
             ) : (
               <ProjectWorkspace

@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
 import { ParcelContextPanel } from './ParcelContextPanel'
 import { fetchParcelWithJurisdictionAndClaims } from '../lib/data'
-import type { Parcel, ParcelContext } from '../lib/types'
+import type { ParcelContext } from '../lib/types'
 
 type SidebarProps = {
   selectedParcelId: string | null
-  allParcels: Parcel[]
 }
 
 function EmptyState() {
@@ -21,7 +20,7 @@ function EmptyState() {
   )
 }
 
-export function Sidebar({ selectedParcelId, allParcels: _allParcels }: SidebarProps) {
+export function Sidebar({ selectedParcelId }: SidebarProps) {
   const [context, setContext] = useState<ParcelContext | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

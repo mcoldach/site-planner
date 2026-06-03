@@ -11,6 +11,12 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.103.3
         version: 2.103.3
+      '@turf/area':
+        specifier: ^7.3.5
+        version: 7.3.5
+      '@turf/bbox':
+        specifier: ^7.3.5
+        version: 7.3.5
       '@turf/turf':
         specifier: ^7.3.5
         version: 7.3.5
