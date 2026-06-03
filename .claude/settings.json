@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git branch*)",
+      "Bash(git show*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(sort:*)",
+      "Bash(pnpm list*)",
+      "Bash(pnpm run lint*)",
+      "Bash(pnpm run build*)",
+      "Bash(npx supabase migration list*)",
+      "Bash(npx supabase functions list*)",
+      "Bash(npx supabase db dump*)",
+      "Bash(python *--dry-run*)",
+      "Bash(python check.py*)",
+      "Bash(python probe.py*)"
+    ],
+    "deny": [
+      "Bash(npx supabase db push*)",
+      "Bash(npx supabase functions deploy*)",
+      "Bash(git push*)",
+      "Bash(git reset --hard*)",
+      "Bash(rm -rf*)",
+      "Bash(pnpm seed:*)"
+    ]
+  }
+}

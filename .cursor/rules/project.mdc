@@ -10,12 +10,12 @@ Browser-first web app. Parcel geometry + governing rules + public records → ed
 ## Stack (decided — do not suggest alternatives)
 - React + Vite + TypeScript (NOT Next.js)
 - MapLibre GL JS for 2D map (NOT Mapbox, NOT Cesium)
-- Three.js + React Three Fiber for 3D scheme view (Phase 1+, not Phase 0)
+- Three.js + React Three Fiber for 3D scheme view (Phase 4)
 - Supabase-managed Postgres with PostGIS and pgvector (NOT a separate vector DB)
-- Graphile Worker for background jobs (NOT Temporal, NOT Inngest) — Phase 1+
-- Docling primary, PyMuPDF fallback for PDF parsing — Phase 2+
+- Graphile Worker for background jobs (NOT Temporal, NOT Inngest) — not yet wired
+- pdfplumber for PDF parsing (local Python ingest pipeline, strategy registry)
 - Tailwind CSS with locked-down custom config (tokens only)
-- Cloudflare R2 for object storage — Phase 1+
+- Cloudflare R2 for object storage (Supabase Storage in use for ingest now)
 
 ## Governing principles (non-negotiable)
 1. Cited, versioned truth. Every user-visible rule traces to a source_snapshot.
@@ -27,7 +27,7 @@ Browser-first web app. Parcel geometry + governing rules + public records → ed
 7. LLMs propose; PostGIS + typed code compute. LLMs are never the source of zoning truth.
 
 ## Current phase
-Phase 0 — setup and validation. Scope: real parcel lookup + cited rules panel. No auth, no editing, no LLM, no Tauri, no R3F yet. Those come in Phase 1+.
+Phase 2 — first end-to-end workflow. Parcel lookup, document ingest, claim extraction (transformer pipeline), scheme editing, compliance checking all working. Track A (claims/transformer) closed. Track B (parcel enrichment, BoE) in progress. See Project_Compass.md for full state.
 
 ## Design language
 Tufte + Knaflic. Restrained palette: greys + two blues (accent and secondary). One thing emphasized per view. Thin rules, generous whitespace, serif for headings, sans for body. The citation panel is the product's signature visual moment — treat it with care.
