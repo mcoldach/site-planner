@@ -171,6 +171,7 @@ per_zone_matrix:
       constraint_kind: scalar_min
     "height":
       constraint_kind: scalar_max
+    "district standards": {constraint_kind: scalar_min}
 
   rows:
     # Density (new rule_key this shape)
@@ -276,6 +277,9 @@ per_zone_matrix:
     "building height (maximum)":
       rule_key: building.height
       constraint_kind: scalar_max
+
+    # District minimum size (C/D matrix; constrains the district, not a lot)
+    "district area (minimum)": {rule_key: district.area, constraint_kind: scalar_min}
 
   composites: {}
   ignore_rows: []
