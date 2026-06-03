@@ -74,9 +74,11 @@ Deno.serve(async (req) => {
 
     // 0. Local hit?
     const { data: existing, error: selErr } = await supabase
-      .from('parcels').select('id').eq('source_apn', cleanApn).maybeSingle()
+      .from('parcels').select('id, raw_attrs, source_system').eq('source_apn', cleanApn).maybeSingle()
     if (selErr) return json({ error: `db: ${selErr.message}` }, 500)
-    if (existing) return json({ found: true, parcelId: existing.id, cached: true })
+    if (existing && existing.raw_attrs?.zoningCode) {
+      return json({ found: true, parcelId: existing.id, cached: true })
+    }
 
     // 1. PHASE 1 — Locate via statewide layer.
     const where = `parcel_id IN ('${cleanApn.replace(/'/g, "''")}')`
@@ -122,7 +124,7 @@ Deno.serve(async (req) => {
     // 3. Upsert the chosen record.
     const { data: newId, error: rpcErr } = await supabase.rpc('upsert_parcel', {
       _source_apn: cleanApn,
-      _source_system: authoritativeSource ? 'cos_landrecords' : 'co_public_parcels',
+      _source_system: existing?.source_system ?? (authoritativeSource ? 'cos_landrecords' : 'co_public_parcels'),
       _geojson: geometry,
       _raw_attrs: props,
       _retrieved_at: new Date().toISOString(),
