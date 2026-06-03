@@ -17,12 +17,16 @@ and append the resolution to the decisions log._
 
 ## Where I am
 
-**Phase 1 complete. Phase 2 — opener: multi-polygon schemes (data-model
-change), then hybrid retrieval + claim-proposer.**
+**Phase 2 active. Track A CLOSED (2026-06-02). Track B in progress — B2
+parcel enrichment + Edge Function caching fix.**
 
-Last working session (2026-05-27): finished the document ingestion pipeline
-end-to-end on the CS UDC, after a mid-session API key leak that was fully
-remediated.
+Last working session (2026-06-02 PM): Track A closed (all three finish-queue
+items shipped). Municipal jurisdictions seeded (7 EPC municipalities). Map
+refresh bug fixed. parcel_source migration pushed for Monument, Fountain,
+Manitou Springs.
+
+Current session (2026-06-02 evening): Track B2 — verifying parcel enrichment
+pipeline, fixing the Edge Function caching gap so stale parcels auto-re-enrich.
 
 ## Decisions log (append-only)
 
@@ -746,3 +750,114 @@ Google 3D Tiles gating granularity · Vercel deploy (no URL to share yet).
   / rejected 24 untouched, claims_failed 0. Detector-precedence trap is the same
   one the matrix detector hit on 2026-05-30 — specific signatures MUST precede the
   dimensional label_path heuristic.
+
+## 2026-06-02 — Track A closed
+
+**Step 1 (p217 R-4) — SHIPPED + committed.** Husk-reunification in
+reattach_fragments. Diagnosis: NOT a 1-col detection bug (Compass was wrong);
+7.2.2-F p216 is a title-only husk, R-4's body is a clean 3-col fragment on p217.
+Fix = body-less titled husk adopts the following titleless 3-col body
+(_is_titled_husk + pre-dovetail branch). Metadata-only. R-4 10->21, null-zone
+14->3. D2 fully closed (all four fragments resolved).
+
+**Step 2 (7.4.10-G loading) — SHIPPED + committed.** New per_use_loading shape.
+Compass framing wrong on 3 counts: it's a RATIO not prose; needed a NEW extractor
+(per-cell denominator, not A2-core's per-header); real blocker was detector
+PRECEDENCE (dimensional ate it first). Fix: Shape.PER_USE_LOADING +
+_detect_loading_ratio (keys on a "required loading spaces" CELL since headers=[]),
+registered BEFORE dimensional; parse_loading_cell; _extract_loading_ratio (ratio
+from col_1, size spec -> notes from col_2). rule_key: parking.required +
+scope.building_element=loading (NOT a new key). 2 loading claims, dimensional
+21->20, unmapped 25->23.
+
+**Step 3 (district.area) — YAML committed, transform NOT yet re-run.**
+Added "district standards" category + "district area (minimum)" row to the
+per_zone_matrix block -> district.area / scalar_min. Source: 7.4.2-C (MX-M 2.5ac,
+MX-L 10ac), 7.4.2-D (BP 10ac, NNA-O "Per base zone district" -> prose). Takes
+effect on next transform run; not yet verified against DB.
+
+**Deferred to backlog (tagged, NOT debt):**
+- #2 Adjacency ("Setbacks [10] / Adjacent to residential", 7.4.2-D): §10 contextual
+  scope decision. Existing composite is keyed to the wrong label
+  ("adjacent to existing or planned residential zone or use") so it doesn't catch
+  this leaf. Needs a scope-axis call (adjacency: residential on which setback).
+- #3 Build-to Front Min/Max (7.4.2-C): rule_keys §8.3 says this is a `range`
+  value_kind on setback.front — the ONTOLOGY HAS THE SHAPE. What's missing is the
+  two-row assembly (combine Front/Minimum + Front/Maximum into one range claim);
+  the per-row mapper can't gather across rows. Needs a merge pass or a range
+  assembly step. Its own session.
+
+**Process note:** rule_keys.md lives ONLY in the Claude project knowledge, never
+copied into the repo, though migrations comment-reference "rule_keys.md (repo
+root)". Not a blocker (rule_key is free text, no CHECK depends on it). If it
+should be version-controlled, copy the canonical text into the repo as a one-off.
+
+**Invariant held all session:** approved 16 / rejected 24, untouched throughout.
+
+## 2026-06-02 (evening) — Track B2: parcel enrichment + caching fix
+
+**Track A is CLOSED. Do not reopen it.** All remaining items are backlog-tagged
+deferrals (adjacency, build-to range) or future sessions (A5 Sources tab, A6
+source navigation). Track B is the active track.
+
+**B2 redefined.** Original B2 was "lookup-parcel geometry bug" — that was fixed
+in a prior session (refreshParcelsToken prop on Map). B2 now = parcel enrichment
+verification + Edge Function caching fix. The geometry bug is closed.
+
+**Migration 20260602220000 confirmed pushed.** `supabase migration list` shows
+it on both local and remote. Three jurisdictions (Monument, Fountain, Manitou
+Springs) now have parcel_source entries with authoritative FeatureServer endpoints
+and field_maps.
+
+**Municipal jurisdictions seeded.** `pnpm seed:boundaries` ran successfully in
+the prior session — 7/7 EPC municipalities upserted with DOLA boundaries. EPC
+unincorporated boundary recomputed. Jurisdiction resolution verified working
+(Monument parcel resolves to "Town of Monument").
+
+**Map refresh fix shipped.** `refreshParcelsToken` prop on App.tsx + Map.tsx.
+After a lookup inserts a new parcel, the Map re-fetches and re-applies the
+parcel GeoJSON source so the new parcel renders immediately without a full
+reload. Includes catch-up fly-to + highlight for the async-refresh race.
+
+**Stale parcels identified.** 4 parcels cached before the parcel_source migration
+(APNs 4307000002, 4307000004, 4307001001, 5226402021) have source_system=
+'co_public_parcels' and null zoningCode. All have 0 site_parcels references —
+safe to DELETE. Cleanup in progress.
+
+**Edge Function caching gap diagnosed.** `lookup-parcel/index.ts` line 79: the
+early return checks only if a parcel EXISTS by APN — never whether it has zoning.
+Any parcel cached before its jurisdiction had a parcel_source returns stale data
+forever. Three-part fix:
+1. Widen the cache select from `id` to `id, raw_attrs, source_system`
+2. Only return cached if `raw_attrs.zoningCode` is present; otherwise fall through
+   to Phase 1/2 for re-enrichment
+3. Preserve existing `source_system` on re-enrichment upsert (the unique key is
+   `(source_system, source_apn)` — changing source_system would INSERT a duplicate
+   instead of updating; site_parcels has ON DELETE RESTRICT so orphaned rows can't
+   be casually deleted)
+
+**Known cosmetic issue (not blocking):** Edge Function hardcodes `'cos_landrecords'`
+as source_system for ALL authoritative lookups (line 125). Monument/Fountain/Manitou
+parcels get labeled as COS land records. Doesn't affect correctness — source_url and
+raw_attrs.__authoritative_source track real provenance. Fix with a follow-up when it
+matters.
+
+**Known edge case (accepted):** After the caching fix, a parcel in a jurisdiction
+WITHOUT a parcel_source (e.g. unincorporated EPC, Palmer Lake) will have null
+zoningCode and will fall through to Phase 1/2 on every lookup. The statewide layer
+doesn't provide zoningCode for these, so the re-enrichment is a no-op — same data
+upserted. Practically harmless (parcels are looked up once, not repeatedly; the
+statewide API call is fast). If it becomes a performance concern, add a
+`last_enrichment_check` timestamp column to parcels. Not worth a schema change now.
+
+**Track B backlog (updated):**
+- B2 caching fix — IN PROGRESS this session
+- B1 minimum-viable honest BoE — NEXT after B2 verified
+- Multi-parcel assemblage — schema-ready, lift the limit-1 guards (see 2026-06-01
+  horizon reconciliation). Contained, no schema change.
+
+**Commits this session (planned):**
+1. Map refresh fix (App.tsx + Map.tsx)
+2. Jurisdiction enrichment setup (.gitignore, package.json, migration, resolver script)
+3. Edge Function caching fix (after applying + testing)
+4. Compass update
