@@ -1,6 +1,7 @@
 import { area } from '@turf/area'
 import { ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BoePanel } from './BoePanel'
 import { ComplianceResults, ResultRow, aggregateStatus } from './ComplianceResults'
 import { ParcelContextPanel } from './ParcelContextPanel'
 import {
@@ -235,6 +236,9 @@ type SavedSchemeSummaryProps = {
   // single-id and continue to use selectedFootprintId / onSelectFootprint.
   selectedSavedFootprintIds: Set<string | number>
   onToggleSavedFootprint: (id: string | number) => void
+  // Parcel geometry for the active project, used to compute land area
+  // (SF) for the Back-of-Envelope residual land value calc.
+  parcelGeometry: GeoJSON.MultiPolygon
 }
 
 // Renders the persisted scheme that opens with a project — name, footprint
@@ -248,6 +252,7 @@ function SavedSchemeSummary({
   footprints,
   selectedSavedFootprintIds,
   onToggleSavedFootprint,
+  parcelGeometry,
 }: SavedSchemeSummaryProps) {
   const [compliance, setCompliance] = useState<ComplianceResult | null>(null)
   const [complianceError, setComplianceError] = useState<string | null>(null)
@@ -323,6 +328,28 @@ function SavedSchemeSummary({
   // when the parent's load hasn't landed yet.
   const count = scheme.footprint_count || footprints.length
 
+  // Parcel land area (SF) for the BoE residual land value calc. turf's
+  // `area` returns square meters for any GeoJSON geometry.
+  const landSf = useMemo(
+    () => area(parcelGeometry) * SQ_METERS_TO_SQ_FT,
+    [parcelGeometry],
+  )
+
+  // GFA from footprints: sum each footprint's area × its floor count.
+  // Floors model mirrors gfaEstimate — a single elevation divided into
+  // 12-ft stories, min one — so the BoE volume matches the per-building
+  // estimate shown elsewhere.
+  const totalGfa = useMemo(() => {
+    return footprints.reduce((sum, fp) => {
+      const floors = fp.height_ft
+        ? Math.max(1, Math.floor(fp.height_ft / ASSUMED_FLOOR_HEIGHT_FT))
+        : 1
+      return sum + fp.footprint_sf * floors
+    }, 0)
+  }, [footprints])
+
+  const totalFootprintSf = scheme.footprint_sf
+
   return (
     <section>
       <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
@@ -387,6 +414,20 @@ function SavedSchemeSummary({
           </span>
           {complianceError}
         </p>
+      ) : null}
+
+      {compliance ? (
+        <>
+          <div
+            className="my-5 border-t border-[var(--color-fog)]"
+            aria-hidden
+          />
+          <BoePanel
+            gfa={totalGfa}
+            footprintSf={totalFootprintSf}
+            landSf={landSf}
+          />
+        </>
       ) : null}
     </section>
   )
@@ -1933,6 +1974,7 @@ function LoadedProjectWorkspace({
               footprints={currentFootprints}
               selectedSavedFootprintIds={selectedSavedFootprintIds}
               onToggleSavedFootprint={onToggleSavedFootprint}
+              parcelGeometry={context.parcel.geometry}
             />
           )}
           <div className="my-4 border-t border-[var(--color-fog)]" aria-hidden />

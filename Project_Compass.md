@@ -868,9 +868,18 @@ two-phase flow cannot serve parcels absent from the statewide layer. A future fa
 path (try authoritative source directly when Phase 1 misses and APN pattern matches a
 known jurisdiction) would close this, but it's a separate work item — not blocking B2.
 
+**B1 SHIPPED.** Residual land value calculator (BoePanel.tsx) renders inside each
+saved scheme's expanded sidebar view, below compliance results. Income approach:
+GFA × rent → NOI → stabilized value; hard/soft costs from GFA; residual = max land
+cost to clear target YOC. All client-side arithmetic — no migration, no persistence.
+User-editable assumptions (hard $/SF, soft %, rent $/SF/yr, vacancy %, OpEx % EGI,
+cap rate, target YOC) with sensible defaults. Headline is residual land value (total,
+per SF of land, per acre). Red warning when project doesn't pencil. Feasibility-grade
+per Compass scope — DCF and saved assumption sets are Phase 4.
+
 **Track B backlog (updated):**
 - B2 parcel enrichment + caching fix — DONE, VERIFIED
-- B1 minimum-viable honest BoE — NEXT
+- B1 minimum-viable honest BoE — DONE, SHIPPED
 - Multi-parcel assemblage — schema-ready, lift the limit-1 guards (see 2026-06-01
   horizon reconciliation). Contained, no schema change.
 - Statewide coverage fallback — NEW, low priority. Try authoritative source directly
