@@ -850,14 +850,28 @@ upserted. Practically harmless (parcels are looked up once, not repeatedly; the
 statewide API call is fast). If it becomes a performance concern, add a
 `last_enrichment_check` timestamp column to parcels. Not worth a schema change now.
 
+**B2 VERIFIED.** All three municipalities tested end-to-end:
+- Monument `7100000458` — already enriched (zoning `PCD`, source_url → Monument
+  FeatureServer). Cached correctly on re-lookup.
+- Fountain `5606410022` — `authoritative: true`, `jurisdiction: "fountain"`. Fresh
+  two-phase flow.
+- Manitou Springs `7404101101` — `authoritative: true`, `jurisdiction:
+  "manitou_springs"`. Fresh two-phase flow.
+Stale parcels (4 rows) deleted before testing. Caching fix deployed and working.
+
+**NEW FINDING: statewide layer coverage gap for Manitou Springs.** APN `7405437002`
+exists in Manitou's local FeatureServer but NOT in the CO Public Parcels statewide
+layer — Phase 1 returns `found: false`. Other Manitou APNs (7404101101, 7404101102,
+7404303062, 7404320012, 7404320013) exist in both layers and work correctly. The gap
+is data-level (statewide compilation is incomplete), not a code bug. IMPLICATION: the
+two-phase flow cannot serve parcels absent from the statewide layer. A future fallback
+path (try authoritative source directly when Phase 1 misses and APN pattern matches a
+known jurisdiction) would close this, but it's a separate work item — not blocking B2.
+
 **Track B backlog (updated):**
-- B2 caching fix — IN PROGRESS this session
-- B1 minimum-viable honest BoE — NEXT after B2 verified
+- B2 parcel enrichment + caching fix — DONE, VERIFIED
+- B1 minimum-viable honest BoE — NEXT
 - Multi-parcel assemblage — schema-ready, lift the limit-1 guards (see 2026-06-01
   horizon reconciliation). Contained, no schema change.
-
-**Commits this session (planned):**
-1. Map refresh fix (App.tsx + Map.tsx)
-2. Jurisdiction enrichment setup (.gitignore, package.json, migration, resolver script)
-3. Edge Function caching fix (after applying + testing)
-4. Compass update
+- Statewide coverage fallback — NEW, low priority. Try authoritative source directly
+  when Phase 1 misses for APNs in jurisdictions with a parcel_source.
