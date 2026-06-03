@@ -11,6 +11,12 @@ const CO_PARCELS_QUERY =
   'https://gis.colorado.gov/public/rest/services/Address_and_Parcel/Colorado_Public_Parcels/FeatureServer/0/query'
 const SERVICE_AREA_FIPS = '041'
 
+const supabase = createClient(
+  Deno.env.get('SUPABASE_URL')!,
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+  { auth: { persistSession: false, autoRefreshToken: false } },
+)
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -35,7 +41,7 @@ async function fetchAuthoritative(
   })}`
   let res: Response
   try {
-    res = await fetch(url)
+    res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
   } catch {
     return null
   }
@@ -66,12 +72,6 @@ Deno.serve(async (req) => {
     }
     const cleanApn = apn.trim()
 
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-      { auth: { persistSession: false, autoRefreshToken: false } },
-    )
-
     // 0. Local hit?
     const { data: existing, error: selErr } = await supabase
       .from('parcels').select('id, raw_attrs, source_system').eq('source_apn', cleanApn).maybeSingle()
@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
     const locUrl = `${CO_PARCELS_QUERY}?${new URLSearchParams({
       where, outFields: '*', f: 'geojson', outSR: '4326',
     })}`
-    const locRes = await fetch(locUrl)
+    const locRes = await fetch(locUrl, { signal: AbortSignal.timeout(10_000) })
     if (!locRes.ok) return json({ error: `arcgis ${locRes.status}` }, 502)
     const locFc = await locRes.json()
     const locFeature = locFc?.features?.[0]

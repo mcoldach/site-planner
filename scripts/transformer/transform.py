@@ -94,23 +94,11 @@ def clear_previous_extraction(
     return claims_cleared, unmapped_cleared
 
 
-def log_unmapped(client: Client, document_table_id: str, label_path: list[str]):
-    try:
-        client.table("unmapped_table_labels").insert({
-            "document_table_id": document_table_id,
-            "label_path": label_path,
-        }).execute()
-    except Exception as e:
-        msg = str(e)
-        if "23505" in msg or "duplicate key" in msg or "unmapped_dedup_idx" in msg:
-            return
-        raise
+BATCH_SIZE = 50
 
 
-def insert_claim(client, claim, jurisdiction_id, source_snapshot_id):
-    # Idempotent: dedup index claims_transformer_dedup_idx makes re-inserts a
-    # no-op via on_conflict. Safe to re-run transform.py on the same document.
-    row = {
+def make_claim_row(claim, jurisdiction_id, source_snapshot_id, retrieved_at):
+    return {
         "jurisdiction_id":    jurisdiction_id,
         "zone_district_code": claim.zone_district_code,
         "rule_key":           claim.rule_key,
@@ -123,11 +111,55 @@ def insert_claim(client, claim, jurisdiction_id, source_snapshot_id):
         "source_class":       "official",
         "review_state":       "extracted",
         "claim_version":      1,
-        "retrieved_at":       datetime.now(timezone.utc).isoformat(),
+        "retrieved_at":       retrieved_at,
         "notes":              claim.notes,
         "source_table_id":    claim.source_table_id,
     }
-    client.table("claims").insert(row).execute()
+
+
+def batch_insert_claims(client, rows, stats, insert_errors):
+    for i in range(0, len(rows), BATCH_SIZE):
+        batch = rows[i:i + BATCH_SIZE]
+        try:
+            client.table("claims").insert(batch).execute()
+            stats["claims_inserted"] += len(batch)
+        except Exception as e:
+            msg = str(e)
+            if "23505" not in msg and "duplicate key" not in msg and "claims_transformer_dedup_idx" not in msg:
+                raise
+            for row in batch:
+                try:
+                    client.table("claims").insert(row).execute()
+                    stats["claims_inserted"] += 1
+                except Exception as e2:
+                    msg2 = str(e2)
+                    if "23505" in msg2 or "duplicate key" in msg2 or "claims_transformer_dedup_idx" in msg2:
+                        stats.setdefault("claims_skipped_existing", 0)
+                        stats["claims_skipped_existing"] += 1
+                    else:
+                        stats["claims_failed"] += 1
+                        insert_errors.append(
+                            f"{row['rule_key']} zone={row['zone_district_code']} scope={row['scope']}: {e2}"
+                        )
+
+
+def batch_insert_unmapped(client, rows, insert_errors):
+    for i in range(0, len(rows), BATCH_SIZE):
+        batch = rows[i:i + BATCH_SIZE]
+        try:
+            client.table("unmapped_table_labels").insert(batch).execute()
+        except Exception as e:
+            msg = str(e)
+            if "23505" not in msg and "duplicate key" not in msg and "unmapped_dedup_idx" not in msg:
+                raise
+            for row in batch:
+                try:
+                    client.table("unmapped_table_labels").insert(row).execute()
+                except Exception as e2:
+                    msg2 = str(e2)
+                    if "23505" in msg2 or "duplicate key" in msg2 or "unmapped_dedup_idx" in msg2:
+                        continue
+                    insert_errors.append(f"unmapped log failed: {e2}")
 
 
 def main():
@@ -164,6 +196,9 @@ def main():
 
     insert_errors: list[str] = []
     unmapped_details: list[tuple] = []
+    claim_rows: list[dict] = []
+    unmapped_rows: list[dict] = []
+    retrieved_at = datetime.now(timezone.utc).isoformat()
 
     for table in tables:
         stats["tables_seen"] += 1
@@ -183,10 +218,10 @@ def main():
                 stats["rows_unmapped"] += 1
                 unmapped_details.append((ex.label_path, ex.row_label, ex.zone, ex.table_number))
                 if not args.dry_run:
-                    try:
-                        log_unmapped(client, ex.document_table_id, ex.label_path)
-                    except Exception as e:
-                        insert_errors.append(f"unmapped log failed: {e}")
+                    unmapped_rows.append({
+                        "document_table_id": ex.document_table_id,
+                        "label_path": ex.label_path,
+                    })
                 continue
             for m in mo.claims:
                 claim = build_claim(ex, m)
@@ -195,19 +230,13 @@ def main():
                     continue
                 stats["claims_built"] += 1
                 if not args.dry_run:
-                    try:
-                        insert_claim(client, claim, jurisdiction_id, source_snapshot_id)
-                        stats["claims_inserted"] += 1
-                    except Exception as e:
-                        msg = str(e)
-                        if "23505" in msg or "duplicate key" in msg or "claims_transformer_dedup_idx" in msg:
-                            stats.setdefault("claims_skipped_existing", 0)
-                            stats["claims_skipped_existing"] += 1
-                        else:
-                            stats["claims_failed"] += 1
-                            insert_errors.append(
-                                f"{claim.rule_key} zone={claim.zone_district_code} scope={claim.scope}: {e}"
-                            )
+                    claim_rows.append(
+                        make_claim_row(claim, jurisdiction_id, source_snapshot_id, retrieved_at)
+                    )
+
+    if not args.dry_run:
+        batch_insert_claims(client, claim_rows, stats, insert_errors)
+        batch_insert_unmapped(client, unmapped_rows, insert_errors)
 
     print("\n=== Summary ===")
     for k, v in stats.items():
