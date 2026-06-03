@@ -31,3 +31,6 @@ dist-ssr
 !.env.*.example
 __pycache__/
 *.pyc
+
+# Script output artifacts
+scripts/out/

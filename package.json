@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "seed:jurisdictions": "tsx scripts/seed_jurisdictions.ts",
     "seed:parcels": "tsx scripts/seed_parcels.ts",
-    "classify:test": "tsx scripts/test-classify.ts"
+    "seed:boundaries": "tsx scripts/seed_municipal_boundaries.ts",
+    "classify:test": "tsx scripts/test-classify.ts",
+    "resolve:zoning": "tsx scripts/resolve_zoning_layers.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.103.3",
