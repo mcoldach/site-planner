@@ -89,7 +89,42 @@ Deno.serve(async (req) => {
     if (!locRes.ok) return json({ error: `arcgis ${locRes.status}` }, 502)
     const locFc = await locRes.json()
     const locFeature = locFc?.features?.[0]
-    if (!locFeature) return json({ found: false })
+    if (!locFeature) {
+      // Fallback: statewide layer missed — try authoritative sources directly.
+      const { data: sources, error: srcErr } = await supabase
+        .from('jurisdictions')
+        .select('id, slug, parcel_source')
+        .not('parcel_source', 'is', null)
+      if (srcErr || !sources?.length) return json({ found: false })
+
+      const results = await Promise.all(
+        sources.map(async (j) => {
+          const auth = await fetchAuthoritative(cleanApn, j.parcel_source)
+          return auth ? { jurisdiction: j, ...auth } : null
+        }),
+      )
+      const hit = results.find((r) => r !== null)
+      if (!hit) return json({ found: false })
+
+      const { data: newId, error: rpcErr } = await supabase.rpc('upsert_parcel', {
+        _source_apn: cleanApn,
+        _source_system: existing?.source_system ?? 'cos_landrecords',
+        _geojson: hit.geometry,
+        _raw_attrs: hit.props,
+        _retrieved_at: new Date().toISOString(),
+        _source_url: hit.jurisdiction.parcel_source.endpoint,
+      })
+      if (rpcErr) return json({ error: `upsert: ${rpcErr.message}` }, 500)
+
+      return json({
+        found: true,
+        parcelId: newId,
+        cached: false,
+        jurisdiction: hit.jurisdiction.slug,
+        authoritative: true,
+        fallback: true,
+      })
+    }
 
     const locProps = locFeature.properties ?? {}
 
