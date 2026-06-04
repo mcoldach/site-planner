@@ -129,7 +129,7 @@ function projectsToFeatureCollections(projects: Project[]): {
       features: projects.map((p) => ({
         type: 'Feature',
         id: p.id,
-        properties: { id: p.id, name: p.name },
+        properties: { id: p.id, name: p.name, color: p.color },
         geometry: p.geometry,
       })),
     },
@@ -138,7 +138,7 @@ function projectsToFeatureCollections(projects: Project[]): {
       features: projects.map((p) => ({
         type: 'Feature',
         id: p.id,
-        properties: { id: p.id, name: p.name },
+        properties: { id: p.id, name: p.name, color: p.color },
         geometry: p.centroid,
       })),
     },
@@ -462,7 +462,7 @@ export function Map({
             source: 'projects-poly',
             minzoom: 14,
             paint: {
-              'fill-color': accentWash,
+              'fill-color': ['coalesce', ['get', 'color'], accentWash],
               'fill-opacity': 0.35,
             },
           });
@@ -473,7 +473,7 @@ export function Map({
             source: 'projects-poly',
             minzoom: 14,
             paint: {
-              'line-color': accent,
+              'line-color': ['coalesce', ['get', 'color'], accent],
               'line-width': 2,
             },
           });
@@ -484,7 +484,7 @@ export function Map({
             source: 'projects-pts',
             maxzoom: 14,
             paint: {
-              'circle-color': accent,
+              'circle-color': ['coalesce', ['get', 'color'], accent],
               'circle-radius': 6,
               'circle-stroke-width': 2,
               'circle-stroke-color': '#ffffff',

@@ -81,6 +81,8 @@ export type ParcelContext = {
 export type Project = {
   id: string;
   name: string;
+  color: string;
+  icon: string;
   geometry: GeoJSON.Geometry;
   centroid: GeoJSON.Point;
 };

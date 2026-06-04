@@ -59,7 +59,7 @@ export async function fetchAllParcels(): Promise<Parcel[]> {
 export async function fetchProjects(): Promise<Project[]> {
   const { data, error } = await supabase
     .from('projects_geojson')
-    .select('id, name, geometry, centroid');
+    .select('id, name, color, icon, geometry, centroid');
 
   if (error) {
     throw new Error(`fetchProjects failed: ${error.message}`);
@@ -205,9 +205,37 @@ export async function createProjectWithParcel(
   return project;
 }
 
+export async function archiveProject(projectId: string): Promise<void> {
+  const { error } = await supabase
+    .from('projects')
+    .update({ archived_at: new Date().toISOString() })
+    .eq('id', projectId);
+  if (error) throw new Error(`archiveProject failed: ${error.message}`);
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  const { error } = await supabase
+    .from('projects')
+    .delete()
+    .eq('id', projectId);
+  if (error) throw new Error(`deleteProject failed: ${error.message}`);
+}
+
+export async function updateProject(
+  projectId: string,
+  fields: { name?: string; color?: string; icon?: string },
+): Promise<void> {
+  const { error } = await supabase
+    .from('projects')
+    .update(fields)
+    .eq('id', projectId);
+  if (error) throw new Error(`updateProject failed: ${error.message}`);
+}
+
 type ProjectWithSites = {
   id: string;
   name: string;
+  color: string;
   sites: { site_parcels: { parcel_id: string }[] }[];
 };
 
@@ -222,13 +250,13 @@ type ProjectWithSites = {
 export async function fetchProjectContext(
   projectId: string,
 ): Promise<{
-  project: { id: string; name: string };
+  project: { id: string; name: string; color: string };
   context: ParcelContext;
   parcelIds: string[];
 }> {
   const { data, error } = await supabase
     .from('projects')
-    .select('id, name, sites(site_parcels(parcel_id))')
+    .select('id, name, color, sites(site_parcels(parcel_id))')
     .eq('id', projectId)
     .single();
 
@@ -252,7 +280,7 @@ export async function fetchProjectContext(
 
   const context = await fetchParcelWithJurisdictionAndClaims(allParcelIds[0]);
   return {
-    project: { id: project.id, name: project.name },
+    project: { id: project.id, name: project.name, color: project.color },
     context,
     parcelIds: allParcelIds,
   };

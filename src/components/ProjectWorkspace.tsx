@@ -1,15 +1,18 @@
 import { area } from '@turf/area'
-import { ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { Archive, ChevronDown, ChevronLeft, ChevronRight, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BoePanel } from './BoePanel'
 import { ComplianceResults, ResultRow, aggregateStatus } from './ComplianceResults'
 import { ParcelContextPanel } from './ParcelContextPanel'
 import {
   addParcelToProject,
+  archiveProject,
   checkSchemeCompliance,
+  deleteProject,
   deleteScheme,
   fetchParcelsById,
   fetchProjectContext,
+  updateProject,
   fetchProjectSchemes,
   fetchSchemeFootprints,
   lookupParcelByApn,
@@ -86,19 +89,110 @@ function EmptyState() {
   )
 }
 
+const PROJECT_COLORS = [
+  '#3b4664', '#6b7a99', '#2d6a4f', '#40916c',
+  '#9b2226', '#ae2012', '#0077b6', '#023e8a',
+  '#7b2d8b', '#e76f51', '#b5838d', '#606c38',
+]
+
 type WorkspaceHeaderProps = {
   name: string
+  color: string
   expanded: boolean
   onClose: () => void
+  onArchive: () => void
+  onDelete: () => void
+  onColorChange: (color: string) => void
 }
 
-function WorkspaceHeader({ name, expanded, onClose }: WorkspaceHeaderProps) {
+function WorkspaceHeader({
+  name,
+  color,
+  expanded,
+  onClose,
+  onArchive,
+  onDelete,
+  onColorChange,
+}: WorkspaceHeaderProps) {
+  const [menuOpen, setMenuOpen] = useState(false)
+
   return (
     <header className="flex items-start justify-between">
-      <div className="min-w-0">
-        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
-          PROJECT
-        </p>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
+            PROJECT
+          </p>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label="Project options"
+              onClick={() => setMenuOpen((v) => !v)}
+              className="rounded-sm p-0.5 text-[var(--color-slate)] hover:text-[var(--color-ink)]"
+            >
+              <ChevronDown className="size-3" strokeWidth={2} />
+            </button>
+            {menuOpen ? (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setMenuOpen(false)}
+                />
+                <div className="absolute left-0 top-full z-50 mt-1 w-40 border border-[var(--color-fog)] bg-[var(--color-canvas)] shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      onArchive()
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--color-ink)] hover:bg-[var(--color-paper)]"
+                  >
+                    <Archive className="size-3" strokeWidth={2} />
+                    Archive
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      onDelete()
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--color-ink)] hover:bg-[var(--color-paper)]"
+                  >
+                    <Trash2 className="size-3" strokeWidth={2} />
+                    Delete
+                  </button>
+                  <div className="border-t border-[var(--color-fog)] px-3 py-2">
+                    <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
+                      Color
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {PROJECT_COLORS.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          aria-label={c}
+                          onClick={() => {
+                            onColorChange(c)
+                            setMenuOpen(false)
+                          }}
+                          className="size-4 rounded-full border border-white/50"
+                          style={{
+                            backgroundColor: c,
+                            outline:
+                              c === color
+                                ? '2px solid var(--color-ink)'
+                                : 'none',
+                            outlineOffset: '1px',
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
         <h2
           className={`mt-1 truncate font-serif text-[var(--color-ink)] ${
             expanded ? 'text-2xl' : 'text-lg'
@@ -1605,9 +1699,11 @@ function LoadedProjectWorkspace({
   selectedSavedFootprintIds,
   onToggleSavedFootprint,
 }: LoadedProjectWorkspaceProps) {
-  const [project, setProject] = useState<{ id: string; name: string } | null>(
-    null,
-  )
+  const [project, setProject] = useState<{
+    id: string
+    name: string
+    color: string
+  } | null>(null)
   const [context, setContext] = useState<ParcelContext | null>(null)
   const [parcelIds, setParcelIds] = useState<string[]>([])
   const [siteParcels, setSiteParcels] = useState<Parcel[]>([])
@@ -2084,8 +2180,26 @@ function LoadedProjectWorkspace({
     <>
       <WorkspaceHeader
         name={project.name}
+        color={project.color}
         expanded={expanded}
         onClose={onClose}
+        onArchive={async () => {
+          await archiveProject(projectId)
+          onProjectChanged()
+          onClose()
+        }}
+        onDelete={async () => {
+          if (!window.confirm('Delete this project? This cannot be undone.'))
+            return
+          await deleteProject(projectId)
+          onProjectChanged()
+          onClose()
+        }}
+        onColorChange={async (c) => {
+          await updateProject(projectId, { color: c })
+          setProject((prev) => (prev ? { ...prev, color: c } : prev))
+          onProjectChanged()
+        }}
       />
       {siteParcels.length > 0 ? (
         <div className={expanded ? 'mt-7' : 'mt-5'}>
