@@ -57,6 +57,34 @@ export type Claim = {
   source_snapshot: { title: string; url: string };
 };
 
+export type ReviewState =
+  | 'extracted'
+  | 'reviewed'
+  | 'approved'
+  | 'superseded'
+  | 'conflicted'
+  | 'rejected';
+
+export type ReviewClaim = {
+  id: string;
+  jurisdiction_id: string;
+  zone_district_code: string | null;
+  rule_key: string;
+  review_state: ReviewState;
+  value_text: string | null;
+  value_numeric: number | null;
+  value_unit: string | null;
+  constraint_kind: string;
+  value_kind: string;
+  value: Record<string, unknown>;
+  section_ref: string;
+  section_url: string | null;
+  notes: string | null;
+  edit_note: string | null;
+  claim_version: number;
+  source_snapshots: { title: string; url: string };
+};
+
 export type ZoneCode = {
   code: string;
   label: string | null;

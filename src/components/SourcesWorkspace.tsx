@@ -1,10 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import {
+  editClaim,
+  fetchClaimsForJurisdiction,
   fetchDocumentsForJurisdiction,
   fetchJurisdictions,
 } from '../lib/data'
-import type { Document, IngestStatus, JurisdictionRef } from '../lib/types'
+import type {
+  Document,
+  IngestStatus,
+  JurisdictionRef,
+  ReviewClaim,
+  ReviewState,
+} from '../lib/types'
+import { ReviewClaimsList } from './ReviewClaimsList'
 
 type SourcesWorkspaceProps = {
   /**
@@ -232,14 +241,11 @@ export function SourcesWorkspace({
     string | null
   >(null)
   const [documents, setDocuments] = useState<Document[]>([])
+  const [claims, setClaims] = useState<ReviewClaim[]>([])
+  const [claimsToken, setClaimsToken] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Load jurisdictions once on mount; default to the first one by name.
-  // The "default to colorado-springs or epc-unincorporated" hint from the
-  // spec is satisfied by `order by name` on the server (the two pilot
-  // jurisdictions sort to the top alphabetically among themselves) — we
-  // don't hardcode a slug here to keep the list extensible.
   useEffect(() => {
     let cancelled = false
     void fetchJurisdictions()
@@ -259,46 +265,51 @@ export function SourcesWorkspace({
     }
   }, [])
 
-  // Mirror the selected jurisdiction up to App so the upload modal (rendered
-  // alongside ProjectModal) knows where the upload should land. Using an
-  // effect rather than firing in the onSelect callback so the initial
-  // default-selection also flows through.
   useEffect(() => {
     const selected =
       jurisdictions.find((j) => j.id === selectedJurisdictionId) ?? null
     onJurisdictionChange(selected)
   }, [jurisdictions, selectedJurisdictionId, onJurisdictionChange])
 
-  // Refetch documents whenever the active jurisdiction changes OR the parent
-  // bumps refreshToken (i.e. after a successful upload).
   useEffect(() => {
     if (!selectedJurisdictionId) {
-      // Blank the list when no jurisdiction is selected so stale rows from
-      // the prior jurisdiction don't bleed through. Same data-fetch family
-      // as Sidebar — the rule's exception doesn't cover the synchronous
-      // reset that precedes the fetch.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setDocuments([])
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setClaims([])
       return
     }
     let cancelled = false
     setLoading(true)
     setError(null)
-    void fetchDocumentsForJurisdiction(selectedJurisdictionId)
-      .then((rows) => {
+
+    Promise.all([
+      fetchDocumentsForJurisdiction(selectedJurisdictionId),
+      fetchClaimsForJurisdiction(selectedJurisdictionId),
+    ])
+      .then(([docs, claimsRows]) => {
         if (cancelled) return
-        setDocuments(rows)
+        setDocuments(docs)
+        setClaims(claimsRows)
         setLoading(false)
       })
       .catch((e: unknown) => {
         if (cancelled) return
-        setError(e instanceof Error ? e.message : 'Failed to load documents')
+        setError(e instanceof Error ? e.message : 'Failed to load data')
         setLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [selectedJurisdictionId, refreshToken])
+  }, [selectedJurisdictionId, refreshToken, claimsToken])
+
+  const handleEditClaim = useCallback(
+    async (claimId: string, editNote: string, reviewState: ReviewState) => {
+      await editClaim(claimId, editNote, { reviewState })
+      setClaimsToken((n) => n + 1)
+    },
+    [],
+  )
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-y-auto bg-[var(--color-paper)]">
@@ -330,7 +341,26 @@ export function SourcesWorkspace({
           </p>
         </div>
       ) : (
-        <DocumentsList documents={documents} />
+        <>
+          <DocumentsList documents={documents} />
+
+          {claims.length > 0 ? (
+            <div className="border-t border-[var(--color-fog)] px-8 py-6">
+              <p className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-slate)]">
+                Claims
+              </p>
+              <h3 className="mt-1 font-serif text-base text-[var(--color-ink)]">
+                Extracted constraints
+              </h3>
+              <div className="mt-4">
+                <ReviewClaimsList
+                  claims={claims}
+                  onEdit={handleEditClaim}
+                />
+              </div>
+            </div>
+          ) : null}
+        </>
       )}
     </div>
   )

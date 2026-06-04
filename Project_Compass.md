@@ -17,20 +17,21 @@ and append the resolution to the decisions log._
 
 ## Where I am
 
-**Phase 2 active. Track A CLOSED (2026-06-02). Track B CLOSED (2026-06-03).**
+**Phase 2 active. Track A CLOSED (2026-06-02). Track B CLOSED (2026-06-03).
+A5 Sources tab review shipped (2026-06-03).**
 
-Last working session (2026-06-02 PM): Track A closed (all three finish-queue
-items shipped). Municipal jurisdictions seeded (7 EPC municipalities). Map
-refresh bug fixed. parcel_source migration pushed for Monument, Fountain,
-Manitou Springs.
+Previous session (2026-06-03): Track B closed. Statewide coverage fallback
+shipped. Multi-parcel assemblage UI + compliance migration shipped. Project
+management shipped (RLS via security_invoker, archive/delete, Tufte palette).
 
-Previous session (2026-06-02 evening): Track B2 — verifying parcel enrichment
-pipeline, fixing the Edge Function caching gap so stale parcels auto-re-enrich.
-
-Current session (2026-06-03): Track B closed. Statewide coverage fallback
-shipped (parallel fan-out to authoritative sources when Phase 1 misses).
-Multi-parcel assemblage UI + compliance migration shipped. Both verified
-end-to-end on test account.
+Current session (2026-06-03 PM): A5 Sources tab review surface shipped.
+edit_claim RPC (SECURITY DEFINER, enforces edit_note). Claims panel in
+SourcesWorkspace showing all review states with filter bar (all/extracted/
+approved/rejected). ReviewClaimCard with v2-value-aware formatter, approve/reject
+flow with required edit_note. Verified end-to-end: approve updates DB, counts
+refresh, edit_note persists with version number. Compass Open/parked section
+cleaned: struck 5 stale items (multi-polygon, geometry bug, EPC unincorporated
+boundary, rule-keys ontology, delete-a-scheme).
 
 ## Decisions log (append-only)
 
@@ -128,29 +129,19 @@ end-to-end on test account.
 
 ## Open / parked (delete when resolved → log the resolution above)
 
-**Phase 2 openers:**
-- **Multi-polygon schemes.** A Scheme should hold multiple footprints (vocab
-  says "footprints" plural). Currently single-polygon. Data-model change —
-  decide: child `scheme_footprints` table vs `MultiPolygon` column; how
-  `check_scheme_compliance` handles it (per-footprint setbacks? summed coverage?
-  union vs piecewise?); Terra Draw multi-feature save/load. Read schema + RPCs
-  before proposing.
-- **Hybrid retrieval + claim-proposer foundation.** Fuse `search_chunks` with
-  structured `document_tables` queries; LLM proposes a Claim w/ provenance +
-  review state; never truth until approved.
+**Phase 2 openers (DONE):**
+- ~~Multi-polygon schemes~~ — DONE (2026-05-28, scheme_footprints_cutover).
+- ~~Hybrid retrieval + claim-proposer~~ — REPLACED by deterministic transformer
+  (Track A, closed 2026-06-02). Source navigation (A6) deferred to Phase 3.
 
-**Phase 2 backlog:**
+**Phase 2 backlog (resolved items struck):**
 - **EPC LDC ingest** — upload Municode PDF, run generic strategy, write
   `strategies/municode.py` for the diffs. The real test of the strategy registry.
-- **`lookup-parcel` geometry bug** — new-APN lookups resolve jurisdiction +
-  citations but parcel geometry doesn't render on map (Phase 0 only tested 4
-  seeded parcels). Isolate to the geometry path.
-- **EPC unincorporated boundary** — `ST_Difference` of county polygon minus
-  union of incorporated municipalities (CS, Fountain, Monument, Manitou Springs,
-  Palmer Lake, Green Mountain Falls, Calhan, Ramah). Expensive to get wrong.
-- **Rule-keys ontology** — formalize before claims pass ~50; keys must be clean
-  (a malformed `setback.front.max (build-to)` already had to be fixed). Plus
-  logged `lot.area.min` → `scalar_min` engine fix.
+- ~~`lookup-parcel` geometry bug~~ — FIXED (refreshParcelsToken, 2026-06-02).
+- ~~EPC unincorporated boundary~~ — DONE (refresh_unincorporated_boundary RPC +
+  seed_municipal_boundaries.ts, 7 municipalities, 2026-06-02).
+- ~~Rule-keys ontology~~ — DONE (DB schema: rule_keys table + claim_value_shape_valid
+  CHECK, 2026-05-30). rule_keys.md in project knowledge, not repo (non-blocking).
 - **Overlay / compound-zoning modeling** for claims — unresolved. Also: doc
   contains both per-zone tables (7.2.2-A…E) and combined matrix (7.4.2-A) for
   the same rules → claim-proposer needs an authoritative-table dedup policy.
@@ -160,9 +151,9 @@ end-to-end on test account.
 - **Parser refinements (low priority)** — `label_path` resets stack on new
   section header rather than nesting; 54 low-confidence `document_tables` rows
   are pre-zoning layout artifacts (correctly flagged, preserved).
-- **Editor follow-ups** — delete-a-scheme; directional setbacks (needs
-  road/frontage layer; engine currently uniform-conservative); basemap
-  Protomaps swap if CORS recurs.
+- **Editor follow-ups** — ~~delete-a-scheme~~ (DONE, full UI with confirmation
+  flow); directional setbacks (needs road/frontage layer; engine currently
+  uniform-conservative); basemap Protomaps swap if CORS recurs.
 - **Vercel deployment** — deferred until there's a real reason to share a URL.
 
 **Still-open original questions (unresolved):**
@@ -890,3 +881,38 @@ per Compass scope — DCF and saved assumption sets are Phase 4.
 - Statewide coverage fallback — DONE, SHIPPED (2026-06-03). Parallel fan-out to all
   jurisdictions with `parcel_source` when Phase 1 misses. Verified with APN
   `7405316017` (Manitou Springs, absent from statewide).
+
+## 2026-06-03 PM — A5 Sources tab review
+
+**A5 SHIPPED.** Sources tab now shows all claims for a jurisdiction with full
+review workflow. Migration 20260603150000_edit_claim.sql: `edit_claim` RPC
+(SECURITY DEFINER, enforces edit_note non-null). SourcesWorkspace fetches
+documents + claims in parallel. ReviewClaimsList groups by zone_district_code
+with filter bar (all/extracted/approved/rejected, live counts). ReviewClaimCard
+formats values from v2 JSONB (number/percent/ratio/boolean/prose_deferred),
+shows review_state badge, approve/reject inline with required edit_note
+textarea. Rejected claims render at 50% opacity with line-through badge.
+edit_note persists with version number ("v2: reason").
+
+**Key implementation decision:** `edit_claim` uses SECURITY DEFINER (not
+INVOKER) because claims are shared-reference data with select-only RLS. The
+RPC is the only write path; it enforces the edit_note requirement that a column
+CHECK cannot (edit_note must be null on initial inserts, non-null on edits).
+
+**Value display note:** Transformer-generated claims populate ONLY the v2
+columns (constraint_kind, value_kind, value JSONB), NOT the legacy
+value_text/value_numeric/value_unit columns. The ReviewClaimCard has its own
+`formatReviewValue` that reads the v2 value directly. The ParcelContextPanel
+still uses the legacy columns via `formatClaimValue` (get_parcel_context
+returns legacy columns for approved claims). Migration B will unify this.
+
+**Open/parked cleanup:** 5 items struck as done (multi-polygon schemes,
+lookup-parcel geometry bug, EPC unincorporated boundary, rule-keys ontology,
+delete-a-scheme). All were shipped in prior sessions but never cleaned from the
+Compass.
+
+**Phase 2 completion status:** Track A has shape coverage + Sources tab (A5).
+Track B closes the parcel-to-BoE loop. Per the Compass definition, Phase 2 is
+functionally complete. Remaining items are Phase 2 backlog (EPC LDC ingest,
+overlay modeling, ingest cleanup, directional setbacks) and D-track debts, not
+gating items.

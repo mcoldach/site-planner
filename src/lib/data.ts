@@ -22,6 +22,8 @@ import type {
   Parcel,
   ParcelContext,
   Project,
+  ReviewClaim,
+  ReviewState,
   Scheme,
   SchemeFootprint,
 } from './types';
@@ -681,4 +683,63 @@ export async function uploadDocument(
     throw new Error('uploadDocument: insert returned no row');
   }
   return data as unknown as Document;
+}
+
+const REVIEW_CLAIM_COLUMNS = [
+  'id',
+  'jurisdiction_id',
+  'zone_district_code',
+  'rule_key',
+  'review_state',
+  'value_text',
+  'value_numeric',
+  'value_unit',
+  'constraint_kind',
+  'value_kind',
+  'value',
+  'section_ref',
+  'section_url',
+  'notes',
+  'edit_note',
+  'claim_version',
+  'source_snapshots(title, url)',
+].join(', ');
+
+export async function fetchClaimsForJurisdiction(
+  jurisdictionId: string,
+): Promise<ReviewClaim[]> {
+  const { data, error } = await supabase
+    .from('claims')
+    .select(REVIEW_CLAIM_COLUMNS)
+    .eq('jurisdiction_id', jurisdictionId)
+    .order('zone_district_code', { ascending: true, nullsFirst: true })
+    .order('rule_key', { ascending: true });
+
+  if (error) {
+    throw new Error(`fetchClaimsForJurisdiction failed: ${error.message}`);
+  }
+
+  return (data ?? []) as unknown as ReviewClaim[];
+}
+
+export async function editClaim(
+  claimId: string,
+  editNote: string,
+  opts?: {
+    reviewState?: ReviewState;
+    notes?: string;
+  },
+): Promise<{ id: string; review_state: ReviewState; claim_version: number }> {
+  const { data, error } = await supabase.rpc('edit_claim', {
+    _claim_id: claimId,
+    _edit_note: editNote,
+    _review_state: opts?.reviewState ?? null,
+    _notes: opts?.notes ?? null,
+  });
+
+  if (error) {
+    throw new Error(`editClaim failed: ${error.message}`);
+  }
+
+  return data as { id: string; review_state: ReviewState; claim_version: number };
 }
