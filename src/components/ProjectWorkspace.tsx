@@ -89,30 +89,85 @@ function EmptyState() {
   )
 }
 
+function IconShape({
+  shape,
+  color,
+  size,
+}: {
+  shape: string
+  color: string
+  size: number
+}) {
+  const s = size
+  const half = s / 2
+  switch (shape) {
+    case 'square':
+      return (
+        <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`}>
+          <rect x={1} y={1} width={s - 2} height={s - 2} fill={color} />
+        </svg>
+      )
+    case 'diamond':
+      return (
+        <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`}>
+          <polygon
+            points={`${half},0 ${s},${half} ${half},${s} 0,${half}`}
+            fill={color}
+          />
+        </svg>
+      )
+    case 'triangle':
+      return (
+        <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`}>
+          <polygon
+            points={`${half},0 ${s},${s} 0,${s}`}
+            fill={color}
+          />
+        </svg>
+      )
+    default:
+      return (
+        <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`}>
+          <circle cx={half} cy={half} r={half - 0.5} fill={color} />
+        </svg>
+      )
+  }
+}
+
 const PROJECT_COLORS = [
-  '#3b4664', '#6b7a99', '#2d6a4f', '#40916c',
-  '#9b2226', '#ae2012', '#0077b6', '#023e8a',
-  '#7b2d8b', '#e76f51', '#b5838d', '#606c38',
+  '#1F3A5F', '#4A6D8C', '#2A7F6F', '#5B7A5E',
+  '#7A6E65', '#8B5E3C', '#5E5478', '#4A4A4A',
+]
+
+const PROJECT_ICONS: { key: string; label: string }[] = [
+  { key: 'dot', label: 'Circle' },
+  { key: 'square', label: 'Square' },
+  { key: 'diamond', label: 'Diamond' },
+  { key: 'triangle', label: 'Triangle' },
 ]
 
 type WorkspaceHeaderProps = {
   name: string
   color: string
+  icon: string
   expanded: boolean
   onClose: () => void
   onArchive: () => void
   onDelete: () => void
   onColorChange: (color: string) => void
+  onIconChange: (icon: string) => void
 }
 
 function WorkspaceHeader({
   name,
   color,
+  icon,
   expanded,
   onClose,
   onArchive,
   onDelete,
   onColorChange,
+  onIconChange,
 }: WorkspaceHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -185,6 +240,34 @@ function WorkspaceHeader({
                             outlineOffset: '1px',
                           }}
                         />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="border-t border-[var(--color-fog)] px-3 py-2">
+                    <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
+                      Shape
+                    </p>
+                    <div className="flex gap-1.5">
+                      {PROJECT_ICONS.map((ic) => (
+                        <button
+                          key={ic.key}
+                          type="button"
+                          aria-label={ic.label}
+                          onClick={() => {
+                            onIconChange(ic.key)
+                            setMenuOpen(false)
+                          }}
+                          className="flex size-6 items-center justify-center rounded-sm"
+                          style={{
+                            outline:
+                              ic.key === icon
+                                ? '2px solid var(--color-ink)'
+                                : '1px solid var(--color-fog)',
+                            outlineOffset: '0px',
+                          }}
+                        >
+                          <IconShape shape={ic.key} color={color} size={12} />
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -1703,6 +1786,7 @@ function LoadedProjectWorkspace({
     id: string
     name: string
     color: string
+    icon: string
   } | null>(null)
   const [context, setContext] = useState<ParcelContext | null>(null)
   const [parcelIds, setParcelIds] = useState<string[]>([])
@@ -2181,6 +2265,7 @@ function LoadedProjectWorkspace({
       <WorkspaceHeader
         name={project.name}
         color={project.color}
+        icon={project.icon}
         expanded={expanded}
         onClose={onClose}
         onArchive={async () => {
@@ -2198,6 +2283,11 @@ function LoadedProjectWorkspace({
         onColorChange={async (c) => {
           await updateProject(projectId, { color: c })
           setProject((prev) => (prev ? { ...prev, color: c } : prev))
+          onProjectChanged()
+        }}
+        onIconChange={async (ic) => {
+          await updateProject(projectId, { icon: ic })
+          setProject((prev) => (prev ? { ...prev, icon: ic } : prev))
           onProjectChanged()
         }}
       />

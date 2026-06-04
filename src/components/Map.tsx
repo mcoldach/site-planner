@@ -119,6 +119,53 @@ function setTerraDrawLayerVisibility(
   }
 }
 
+const ICON_SIZE = 24;
+const ICON_NAMES = ['dot', 'square', 'diamond', 'triangle'] as const;
+
+function addProjectIcons(map: maplibregl.Map) {
+  const s = ICON_SIZE;
+  const half = s / 2;
+  const pad = 3;
+
+  for (const name of ICON_NAMES) {
+    const canvas = document.createElement('canvas');
+    canvas.width = s;
+    canvas.height = s;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#000';
+
+    switch (name) {
+      case 'square':
+        ctx.fillRect(pad, pad, s - pad * 2, s - pad * 2);
+        break;
+      case 'diamond':
+        ctx.beginPath();
+        ctx.moveTo(half, pad);
+        ctx.lineTo(s - pad, half);
+        ctx.lineTo(half, s - pad);
+        ctx.lineTo(pad, half);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      case 'triangle':
+        ctx.beginPath();
+        ctx.moveTo(half, pad);
+        ctx.lineTo(s - pad, s - pad);
+        ctx.lineTo(pad, s - pad);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      default:
+        ctx.beginPath();
+        ctx.arc(half, half, half - pad, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+    }
+
+    map.addImage(`icon-${name}`, { width: s, height: s, data: ctx.getImageData(0, 0, s, s).data }, { sdf: true });
+  }
+}
+
 function projectsToFeatureCollections(projects: Project[]): {
   polygons: FeatureCollection;
   points: FeatureCollection;
@@ -129,7 +176,7 @@ function projectsToFeatureCollections(projects: Project[]): {
       features: projects.map((p) => ({
         type: 'Feature',
         id: p.id,
-        properties: { id: p.id, name: p.name, color: p.color },
+        properties: { id: p.id, name: p.name, color: p.color, icon: p.icon },
         geometry: p.geometry,
       })),
     },
@@ -138,7 +185,7 @@ function projectsToFeatureCollections(projects: Project[]): {
       features: projects.map((p) => ({
         type: 'Feature',
         id: p.id,
-        properties: { id: p.id, name: p.name, color: p.color },
+        properties: { id: p.id, name: p.name, color: p.color, icon: p.icon },
         geometry: p.centroid,
       })),
     },
@@ -447,6 +494,8 @@ export function Map({
           projectsPolyRef.current = projectsPoly;
           projectsPtsRef.current = projectsPts;
 
+          addProjectIcons(map);
+
           map.addSource('projects-poly', {
             type: 'geojson',
             data: projectsPoly,
@@ -480,14 +529,18 @@ export function Map({
 
           map.addLayer({
             id: 'projects-dot',
-            type: 'circle',
+            type: 'symbol',
             source: 'projects-pts',
             maxzoom: 14,
+            layout: {
+              'icon-image': ['concat', 'icon-', ['coalesce', ['get', 'icon'], 'dot']],
+              'icon-size': 0.6,
+              'icon-allow-overlap': true,
+            },
             paint: {
-              'circle-color': ['coalesce', ['get', 'color'], accent],
-              'circle-radius': 6,
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#ffffff',
+              'icon-color': ['coalesce', ['get', 'color'], accent],
+              'icon-halo-color': '#ffffff',
+              'icon-halo-width': 2,
             },
           });
 

@@ -236,6 +236,7 @@ type ProjectWithSites = {
   id: string;
   name: string;
   color: string;
+  icon: string;
   sites: { site_parcels: { parcel_id: string }[] }[];
 };
 
@@ -250,13 +251,13 @@ type ProjectWithSites = {
 export async function fetchProjectContext(
   projectId: string,
 ): Promise<{
-  project: { id: string; name: string; color: string };
+  project: { id: string; name: string; color: string; icon: string };
   context: ParcelContext;
   parcelIds: string[];
 }> {
   const { data, error } = await supabase
     .from('projects')
-    .select('id, name, color, sites(site_parcels(parcel_id))')
+    .select('id, name, color, icon, sites(site_parcels(parcel_id))')
     .eq('id', projectId)
     .single();
 
@@ -280,7 +281,7 @@ export async function fetchProjectContext(
 
   const context = await fetchParcelWithJurisdictionAndClaims(allParcelIds[0]);
   return {
-    project: { id: project.id, name: project.name, color: project.color },
+    project: { id: project.id, name: project.name, color: project.color, icon: project.icon },
     context,
     parcelIds: allParcelIds,
   };
