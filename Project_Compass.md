@@ -17,16 +17,20 @@ and append the resolution to the decisions log._
 
 ## Where I am
 
-**Phase 2 active. Track A CLOSED (2026-06-02). Track B in progress — B2
-parcel enrichment + Edge Function caching fix.**
+**Phase 2 active. Track A CLOSED (2026-06-02). Track B CLOSED (2026-06-03).**
 
 Last working session (2026-06-02 PM): Track A closed (all three finish-queue
 items shipped). Municipal jurisdictions seeded (7 EPC municipalities). Map
 refresh bug fixed. parcel_source migration pushed for Monument, Fountain,
 Manitou Springs.
 
-Current session (2026-06-02 evening): Track B2 — verifying parcel enrichment
+Previous session (2026-06-02 evening): Track B2 — verifying parcel enrichment
 pipeline, fixing the Edge Function caching gap so stale parcels auto-re-enrich.
+
+Current session (2026-06-03): Track B closed. Statewide coverage fallback
+shipped (parallel fan-out to authoritative sources when Phase 1 misses).
+Multi-parcel assemblage UI + compliance migration shipped. Both verified
+end-to-end on test account.
 
 ## Decisions log (append-only)
 
@@ -859,14 +863,13 @@ statewide API call is fast). If it becomes a performance concern, add a
   "manitou_springs"`. Fresh two-phase flow.
 Stale parcels (4 rows) deleted before testing. Caching fix deployed and working.
 
-**NEW FINDING: statewide layer coverage gap for Manitou Springs.** APN `7405437002`
+**Statewide layer coverage gap for Manitou Springs — RESOLVED.** APN `7405316017`
 exists in Manitou's local FeatureServer but NOT in the CO Public Parcels statewide
-layer — Phase 1 returns `found: false`. Other Manitou APNs (7404101101, 7404101102,
-7404303062, 7404320012, 7404320013) exist in both layers and work correctly. The gap
-is data-level (statewide compilation is incomplete), not a code bug. IMPLICATION: the
-two-phase flow cannot serve parcels absent from the statewide layer. A future fallback
-path (try authoritative source directly when Phase 1 misses and APN pattern matches a
-known jurisdiction) would close this, but it's a separate work item — not blocking B2.
+layer. (Original finding cited `7405437002`, but that APN doesn't exist in either
+layer — only `7405437001` does and it's in both.) The fallback path now handles this:
+when Phase 1 misses, the Edge Function queries all jurisdictions with a `parcel_source`
+in parallel and uses the first hit. Verified: `7405316017` returns `found: true,
+fallback: true, jurisdiction: "manitou_springs"`.
 
 **B1 SHIPPED.** Residual land value calculator (BoePanel.tsx) renders inside each
 saved scheme's expanded sidebar view, below compliance results. Income approach:
@@ -877,10 +880,13 @@ cap rate, target YOC) with sensible defaults. Headline is residual land value (t
 per SF of land, per acre). Red warning when project doesn't pencil. Feasibility-grade
 per Compass scope — DCF and saved assumption sets are Phase 4.
 
-**Track B backlog (updated):**
+**Track B backlog — ALL DONE:**
 - B2 parcel enrichment + caching fix — DONE, VERIFIED
 - B1 minimum-viable honest BoE — DONE, SHIPPED
-- Multi-parcel assemblage — schema-ready, lift the limit-1 guards (see 2026-06-01
-  horizon reconciliation). Contained, no schema change.
-- Statewide coverage fallback — NEW, low priority. Try authoritative source directly
-  when Phase 1 misses for APNs in jurisdictions with a parcel_source.
+- Multi-parcel assemblage — DONE, SHIPPED (2026-06-03). Assemblage UI in sidebar,
+  `addParcelToProject` + `fetchParcelsById` helpers, `check_scheme_compliance`
+  migration uses ST_Union of all site parcels. Verified with 2-parcel site on test
+  account.
+- Statewide coverage fallback — DONE, SHIPPED (2026-06-03). Parallel fan-out to all
+  jurisdictions with `parcel_source` when Phase 1 misses. Verified with APN
+  `7405316017` (Manitou Springs, absent from statewide).
