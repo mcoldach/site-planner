@@ -5,11 +5,14 @@ import { BoePanel } from './BoePanel'
 import { ComplianceResults, ResultRow, aggregateStatus } from './ComplianceResults'
 import { ParcelContextPanel } from './ParcelContextPanel'
 import {
+  addParcelToProject,
   checkSchemeCompliance,
   deleteScheme,
+  fetchParcelsById,
   fetchProjectContext,
   fetchProjectSchemes,
   fetchSchemeFootprints,
+  lookupParcelByApn,
   saveScheme,
   updateScheme,
 } from '../lib/data'
@@ -31,6 +34,7 @@ const ASSUMED_FLOOR_HEIGHT_FT = 12
 type ProjectWorkspaceProps = {
   projectId: string | null
   onClose: () => void
+  onProjectChanged: () => void
   drawMode: boolean
   onToggleDraw: (next: boolean) => void
   // Imperative "draw another" trigger: bumps the App-level arm token so
@@ -147,6 +151,125 @@ function ConstraintBasis({ parcel, classification }: ConstraintBasisProps) {
           {currentZoningValue(parcel, classification)}
         </p>
       </div>
+    </section>
+  )
+}
+
+type AssemblageSectionProps = {
+  siteParcels: Parcel[]
+  addOpen: boolean
+  onToggleAdd: () => void
+  addApn: string
+  onApnChange: (apn: string) => void
+  addStatus: 'idle' | 'searching' | 'not-found' | 'adding'
+  addError: string | null
+  onLookup: () => void
+}
+
+function AssemblageSection({
+  siteParcels,
+  addOpen,
+  onToggleAdd,
+  addApn,
+  onApnChange,
+  addStatus,
+  addError,
+  onLookup,
+}: AssemblageSectionProps) {
+  return (
+    <section>
+      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)]">
+        SITE ·{' '}
+        <span className="normal-case tracking-normal text-[var(--color-mist)]">
+          {siteParcels.length} {siteParcels.length === 1 ? 'parcel' : 'parcels'}
+        </span>
+      </p>
+      <ul className="mt-2 space-y-1">
+        {siteParcels.map((p) => (
+          <li
+            key={p.id}
+            className="hairline rounded-sm bg-white px-3 py-2"
+          >
+            <div className="truncate font-sans text-sm text-[var(--color-ink)]">
+              {p.label ?? (
+                <span className="italic text-[var(--color-slate)]">
+                  (no label)
+                </span>
+              )}
+            </div>
+            <div className="font-mono text-xs text-[var(--color-slate)]">
+              {p.source_apn}
+              {p.zone_district_code ? ` · ${p.zone_district_code}` : ''}
+            </div>
+          </li>
+        ))}
+      </ul>
+      {addOpen ? (
+        <div className="mt-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={addApn}
+              onChange={(e) => onApnChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  onLookup()
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  onToggleAdd()
+                }
+              }}
+              placeholder="APN…"
+              autoComplete="off"
+              autoFocus
+              className="hairline min-w-0 flex-1 rounded-sm bg-white px-2 py-1 font-mono text-sm text-[var(--color-ink)] placeholder:text-[var(--color-slate)]"
+            />
+            <button
+              type="button"
+              onClick={onLookup}
+              disabled={
+                addApn.trim().length === 0 ||
+                addStatus === 'searching' ||
+                addStatus === 'adding'
+              }
+              className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-accent)] hover:text-[var(--color-accent-soft)] disabled:cursor-not-allowed disabled:text-[var(--color-mist)]"
+            >
+              {addStatus === 'searching'
+                ? 'Searching…'
+                : addStatus === 'adding'
+                  ? 'Adding…'
+                  : 'Look up'}
+            </button>
+            <button
+              type="button"
+              onClick={onToggleAdd}
+              className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)] hover:text-[var(--color-ink)]"
+            >
+              Cancel
+            </button>
+          </div>
+          {addStatus === 'not-found' ? (
+            <p className="mt-1 font-mono text-xs text-[var(--color-slate)]">
+              No parcel found for that APN.
+            </p>
+          ) : null}
+          {addError ? (
+            <p className="mt-1 font-mono text-xs text-[var(--color-ink)]">
+              {addError}
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onToggleAdd}
+          className="mt-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-slate)] hover:text-[var(--color-ink)]"
+        >
+          + Add parcel
+        </button>
+      )}
     </section>
   )
 }
@@ -328,8 +451,9 @@ function SavedSchemeSummary({
   // when the parent's load hasn't landed yet.
   const count = scheme.footprint_count || footprints.length
 
-  // Parcel land area (SF) for the BoE residual land value calc. turf's
-  // `area` returns square meters for any GeoJSON geometry.
+  // V1 approximation: uses the primary parcel geometry for land area.
+  // Multi-parcel assemblages should use ST_Union of all parcels (available
+  // in projects_geojson); the sum-of-parts overestimates shared boundaries.
   const landSf = useMemo(
     () => area(parcelGeometry) * SQ_METERS_TO_SQ_FT,
     [parcelGeometry],
@@ -1445,6 +1569,7 @@ type LoadedProjectWorkspaceProps = {
   projectId: string
   expanded: boolean
   onClose: () => void
+  onProjectChanged: () => void
   drawMode: boolean
   onToggleDraw: (next: boolean) => void
   onArmDraw: () => void
@@ -1466,6 +1591,7 @@ function LoadedProjectWorkspace({
   projectId,
   expanded,
   onClose,
+  onProjectChanged,
   drawMode,
   onToggleDraw,
   onArmDraw,
@@ -1483,6 +1609,14 @@ function LoadedProjectWorkspace({
     null,
   )
   const [context, setContext] = useState<ParcelContext | null>(null)
+  const [parcelIds, setParcelIds] = useState<string[]>([])
+  const [siteParcels, setSiteParcels] = useState<Parcel[]>([])
+  const [addParcelOpen, setAddParcelOpen] = useState(false)
+  const [addParcelApn, setAddParcelApn] = useState('')
+  const [addParcelStatus, setAddParcelStatus] = useState<
+    'idle' | 'searching' | 'not-found' | 'adding'
+  >('idle')
+  const [addParcelError, setAddParcelError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [schemes, setSchemes] = useState<Scheme[]>([])
@@ -1628,7 +1762,13 @@ function LoadedProjectWorkspace({
         if (cancelled) return
         setProject(data.project)
         setContext(data.context)
+        setParcelIds(data.parcelIds)
         setSchemes(list)
+        void fetchParcelsById(data.parcelIds)
+          .then((parcels) => {
+            if (!cancelled) setSiteParcels(parcels)
+          })
+          .catch(() => {})
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -1767,6 +1907,42 @@ function LoadedProjectWorkspace({
     // intentionally only run on unmount: projectId is the parent key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  async function handleAddParcel() {
+    const apn = addParcelApn.trim()
+    if (!apn) return
+    setAddParcelStatus('searching')
+    setAddParcelError(null)
+    try {
+      const result = await lookupParcelByApn(apn)
+      if (!result.found) {
+        setAddParcelStatus('not-found')
+        return
+      }
+      if (parcelIds.includes(result.parcelId)) {
+        setAddParcelError('That parcel is already in this site.')
+        setAddParcelStatus('idle')
+        return
+      }
+      setAddParcelStatus('adding')
+      await addParcelToProject(projectId, result.parcelId)
+      const data = await fetchProjectContext(projectId)
+      setProject(data.project)
+      setContext(data.context)
+      setParcelIds(data.parcelIds)
+      const parcels = await fetchParcelsById(data.parcelIds)
+      setSiteParcels(parcels)
+      setAddParcelOpen(false)
+      setAddParcelApn('')
+      setAddParcelStatus('idle')
+      onProjectChanged()
+    } catch (err) {
+      setAddParcelError(
+        err instanceof Error ? err.message : 'Failed to add parcel',
+      )
+      setAddParcelStatus('idle')
+    }
+  }
 
   async function handleStartEdit(scheme: Scheme) {
     // Stop drawing first so polygon-mode doesn't fight with select-mode in
@@ -1911,6 +2087,29 @@ function LoadedProjectWorkspace({
         expanded={expanded}
         onClose={onClose}
       />
+      {siteParcels.length > 0 ? (
+        <div className={expanded ? 'mt-7' : 'mt-5'}>
+          <AssemblageSection
+            siteParcels={siteParcels}
+            addOpen={addParcelOpen}
+            onToggleAdd={() => {
+              setAddParcelOpen((prev) => !prev)
+              setAddParcelApn('')
+              setAddParcelStatus('idle')
+              setAddParcelError(null)
+            }}
+            addApn={addParcelApn}
+            onApnChange={(v) => {
+              setAddParcelApn(v)
+              setAddParcelStatus('idle')
+              setAddParcelError(null)
+            }}
+            addStatus={addParcelStatus}
+            addError={addParcelError}
+            onLookup={() => void handleAddParcel()}
+          />
+        </div>
+      ) : null}
       <div className={expanded ? 'mt-7' : 'mt-5'}>
         <ConstraintBasis
           parcel={context.parcel}
@@ -2032,6 +2231,7 @@ function ExpandToggle({ expanded, onToggle, className }: ExpandToggleProps) {
 export function ProjectWorkspace({
   projectId,
   onClose,
+  onProjectChanged,
   drawMode,
   onToggleDraw,
   onArmDraw,
@@ -2090,6 +2290,7 @@ export function ProjectWorkspace({
               projectId={projectId}
               expanded={isFullCover}
               onClose={onClose}
+              onProjectChanged={onProjectChanged}
               drawMode={drawMode}
               onToggleDraw={onToggleDraw}
               onArmDraw={onArmDraw}

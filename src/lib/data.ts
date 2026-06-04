@@ -213,20 +213,19 @@ type ProjectWithSites = {
 
 /**
  * Returns a project (id, name) together with the resolved parcel context for
- * its V1 single-parcel site.
+ * its primary parcel, plus the full list of parcel ids in the assemblage.
  *
- * Walks projects -> sites -> site_parcels via PostgREST embeds to resolve the
- * single parcel id, then defers to `fetchParcelWithJurisdictionAndClaims` so
- * Projects mode and Parcels mode share the same `get_parcel_context` path —
- * one canonical claims query, no duplication.
- *
- * V1 contract: one site per project, one parcel per site. When multi-parcel
- * assemblage lands, this will need to fan out (or move to a server-side
- * project_context RPC); the call sites here are the seam.
+ * Walks projects -> sites -> site_parcels via PostgREST embeds to resolve ALL
+ * parcel ids, then fetches ParcelContext for the primary (first) parcel so
+ * Projects mode and Parcels mode share the same `get_parcel_context` path.
  */
 export async function fetchProjectContext(
   projectId: string,
-): Promise<{ project: { id: string; name: string }; context: ParcelContext }> {
+): Promise<{
+  project: { id: string; name: string };
+  context: ParcelContext;
+  parcelIds: string[];
+}> {
   const { data, error } = await supabase
     .from('projects')
     .select('id, name, sites(site_parcels(parcel_id))')
@@ -243,18 +242,70 @@ export async function fetchProjectContext(
   }
 
   const project = data as unknown as ProjectWithSites;
-  const parcelId = project.sites?.[0]?.site_parcels?.[0]?.parcel_id;
-  if (!parcelId) {
+  const allParcelIds =
+    project.sites?.[0]?.site_parcels?.map((sp) => sp.parcel_id) ?? [];
+  if (allParcelIds.length === 0) {
     throw new Error(
       `fetchProjectContext: project "${projectId}" has no parcel attached`,
     );
   }
 
-  const context = await fetchParcelWithJurisdictionAndClaims(parcelId);
+  const context = await fetchParcelWithJurisdictionAndClaims(allParcelIds[0]);
   return {
     project: { id: project.id, name: project.name },
     context,
+    parcelIds: allParcelIds,
   };
+}
+
+/**
+ * Returns minimal parcel records for a list of ids. Used to populate the
+ * assemblage list in the project workspace without requiring the full
+ * allParcels array from App.
+ */
+export async function fetchParcelsById(
+  parcelIds: string[],
+): Promise<Parcel[]> {
+  if (parcelIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('parcels_geojson')
+    .select(PARCELS_GEOJSON_COLUMNS)
+    .in('id', parcelIds);
+
+  if (error) {
+    throw new Error(`fetchParcelsById failed: ${error.message}`);
+  }
+  return (data ?? []) as unknown as Parcel[];
+}
+
+/**
+ * Adds a parcel to a project's site assemblage. Resolves the project's site
+ * (one site per project) then delegates to addParcelToSite.
+ */
+export async function addParcelToProject(
+  projectId: string,
+  parcelId: string,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('sites')
+    .select('id')
+    .eq('project_id', projectId)
+    .order('created_at')
+    .limit(1)
+    .single();
+
+  if (error) {
+    throw new Error(
+      `addParcelToProject: could not resolve site: ${error.message}`,
+    );
+  }
+  if (data == null) {
+    throw new Error(
+      `addParcelToProject: no site found for project "${projectId}"`,
+    );
+  }
+
+  await addParcelToSite((data as { id: string }).id, parcelId);
 }
 
 /**

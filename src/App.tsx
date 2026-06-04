@@ -288,6 +288,7 @@ function App() {
               <ProjectWorkspace
                 projectId={selectedProjectId}
                 onClose={() => setSelectedProjectId(null)}
+                onProjectChanged={() => setProjectsToken((n) => n + 1)}
                 drawMode={drawMode}
                 onToggleDraw={handleToggleDraw}
                 onArmDraw={handleArmDraw}
